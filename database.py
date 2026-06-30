@@ -136,3 +136,17 @@ def delete_order(order_id):
     deleted = cursor.rowcount
     conn.close()
     return deleted > 0
+
+
+def update_order_vehicle(order_id, new_vehicle_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE orders 
+        SET vehicle_id = ? 
+        WHERE id = ?
+    """, (new_vehicle_id, order_id))
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+    return updated > 0
