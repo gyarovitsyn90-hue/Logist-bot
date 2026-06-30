@@ -13,7 +13,7 @@ import openpyxl
 
 from database import (
     init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders, 
-    get_all_vehicles, get_orders_by_date, delete_order, update_order_vehicle
+    get_all_vehicles, get_orders_by_date, delete_order, update_order_vehicle, replace_all_vehicles
 )
 
 # === Состояния ===
@@ -28,7 +28,7 @@ from database import (
 ) = range(10, 15)
 
 
-# === Чистое меню (только актуальные функции) ===
+# === Главное меню ===
 def get_main_menu():
     keyboard = [
         [KeyboardButton("🚚 Машины"), KeyboardButton("📦 Заказы")],
@@ -244,7 +244,11 @@ async def addorder_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         context.user_data["delivery_date"] = text
 
-    vehicles = get_all_vehicles()
+    if "vehicles_cache" not in context.user_data:
+        context.user_data["vehicles_cache"] = get_all_vehicles()
+
+    vehicles = context.user_data["vehicles_cache"]
+
     text = "Выберите машину (введите ID):\n\n"
     for v in vehicles:
         text += f"ID {v[0]} — {v[1]} ({v[2]})\n"
@@ -281,8 +285,11 @@ async def addorder_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def importcars(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Пришли Excel-файл с машинами.")
-    context.user_data["awaiting_file"] = True
+    await update.message.reply_text(
+        "Пришли Excel-файл с машинами.\n\n"
+        "⚠️ Внимание: импорт полностью заменит текущий список машин!"
+    )
+    context.user_data["awaiting_file_replace"] = True
 
 
 async def importorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -291,7 +298,7 @@ async def importorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get("awaiting_file"):
+    if context.user_data.get("awaiting_file_replace"):
         document = update.message.document
         if not document.file_name.endswith((".xlsx", ".xls")):
             await update.message.reply_text("Нужно прислать Excel-файл (.xlsx)")
@@ -312,11 +319,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     row[5]
                 ))
 
-        added, skipped = bulk_add_vehicles(vehicles)
+        added = replace_all_vehicles(vehicles)
         await update.message.reply_text(
-            f"Импорт машин завершён!\nДобавлено: {added} | Пропущено: {skipped}"
+            f"База машин полностью обновлена!\nДобавлено: {added} машин"
         )
-        context.user_data["awaiting_file"] = False
+        context.user_data["awaiting_file_replace"] = False
         return
 
     if context.user_data.get("awaiting_order_file"):
@@ -392,7 +399,7 @@ def main():
     application.add_handler(CommandHandler("importorders", importorders))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    # === Обработка кнопок меню ===
+    # Обработка кнопок меню
     application.add_handler(MessageHandler(filters.Regex("^🚚 Машины$"), cars))
     application.add_handler(MessageHandler(filters.Regex("^📦 Заказы$"), orders))
     application.add_handler(MessageHandler(filters.Regex("^➕ Добавить машину$"), addcar_start))
