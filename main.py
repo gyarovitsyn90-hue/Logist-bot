@@ -37,7 +37,7 @@ def run_health_server():
 # === Команды ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Бот для логистики\n\n"
+        "Бот логистики\n\n"
         "Основные команды:\n"
         "/cars — список машин\n"
         "/addcar — добавить машину (по шагам)\n"
@@ -137,7 +137,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def importcars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Пришли Excel-файл (.xlsx) со списком машин.\n\n"
-        "Лист должен называться «База_машин»"
+        "Название файла и листа может быть любым."
     )
     context.user_data["awaiting_file"] = True
 
@@ -147,28 +147,37 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     document = update.message.document
-    if not document.file_name.endswith(".xlsx"):
-        await update.message.reply_text("Нужен файл .xlsx")
+    if not document.file_name.endswith((".xlsx", ".xls")):
+        await update.message.reply_text("Нужно прислать Excel-файл (.xlsx)")
         return
 
     file = await context.bot.get_file(document.file_id)
     file_bytes = await file.download_as_bytearray()
+
     workbook = openpyxl.load_workbook(BytesIO(file_bytes))
-    sheet = workbook["База_машин"]
+    
+    # Берём первый лист (без привязки к названию)
+    sheet = workbook.active
 
     vehicles = []
     for row in sheet.iter_rows(min_row=2, values_only=True):
-        if row[0]:
+        if row[0]:  # первая колонка = Госномер
             vehicles.append((
-                row[0], row[1], row[2] or 0, row[3] or 0,
-                row[4] or 0, row[7], 
+                row[0],                    # number
+                row[1],                    # model
+                row[2] or 0,               # volume_m3
+                row[3] or 0,               # pallets
+                row[4] or 0,               # max_weight_kg
+                row[7],                    # body_type / Ограничения
                 1 if "Негабарит: Да" in str(row[7]) else 0,
-                row[5]
+                row[5]                     # route_restrictions
             ))
 
     added, skipped = bulk_add_vehicles(vehicles)
     await update.message.reply_text(
-        f"Импорт завершён!\nДобавлено: {added} | Пропущено: {skipped}"
+        f"Импорт завершён!\n\n"
+        f"Добавлено: {added}\n"
+        f"Пропущено (дубликаты): {skipped}"
     )
     context.user_data["awaiting_file"] = False
 
