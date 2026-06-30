@@ -11,7 +11,12 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             number TEXT UNIQUE NOT NULL,
             model TEXT,
-            capacity INTEGER DEFAULT 0,
+            volume_m3 REAL DEFAULT 0,
+            pallets INTEGER DEFAULT 0,
+            max_weight_kg INTEGER DEFAULT 0,
+            body_type TEXT,
+            can_oversized INTEGER DEFAULT 0,
+            route_restrictions TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -34,14 +39,16 @@ def init_db():
     conn.close()
 
 
-def add_vehicle(number: str, model: str = None, capacity: int = 0):
+def add_vehicle(number, model=None, volume_m3=0, pallets=0, max_weight_kg=0,
+                body_type=None, can_oversized=0, route_restrictions=None):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     try:
-        cursor.execute(
-            "INSERT INTO vehicles (number, model, capacity) VALUES (?, ?, ?)",
-            (number, model, capacity)
-        )
+        cursor.execute("""
+            INSERT INTO vehicles 
+            (number, model, volume_m3, pallets, max_weight_kg, body_type, can_oversized, route_restrictions)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (number, model, volume_m3, pallets, max_weight_kg, body_type, can_oversized, route_restrictions))
         conn.commit()
         return True
     except sqlite3.IntegrityError:
@@ -50,14 +57,34 @@ def add_vehicle(number: str, model: str = None, capacity: int = 0):
         conn.close()
 
 
+def bulk_add_vehicles(vehicles_list):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    added, skipped = 0, 0
+
+    for v in vehicles_list:
+        try:
+            cursor.execute("""
+                INSERT INTO vehicles 
+                (number, model, volume_m3, pallets, max_weight_kg, body_type, can_oversized, route_restrictions)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, v)
+            added += 1
+        except sqlite3.IntegrityError:
+            skipped += 1
+
+    conn.commit()
+    conn.close()
+    return added, skipped
+
+
 def get_all_vehicles():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, number, model, capacity FROM vehicles ORDER BY id")
+    cursor.execute("""
+        SELECT id, number, model, volume_m3, pallets, max_weight_kg, body_type 
+        FROM vehicles ORDER BY id
+    """)
     vehicles = cursor.fetchall()
     conn.close()
     return vehicles
-
-
-if __name__ == "__main__":
-    init_db()
