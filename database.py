@@ -27,6 +27,7 @@ def init_db():
             order_number TEXT,
             client TEXT,
             address TEXT,
+            delivery_date TEXT,
             vehicle_id INTEGER,
             status TEXT DEFAULT 'В работе',
             comment TEXT,
@@ -71,6 +72,27 @@ def bulk_add_vehicles(vehicles_list):
             """, v)
             added += 1
         except sqlite3.IntegrityError:
+            skipped += 1
+
+    conn.commit()
+    conn.close()
+    return added, skipped
+
+
+def bulk_add_orders(orders_list):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    added, skipped = 0, 0
+
+    for order in orders_list:
+        try:
+            cursor.execute("""
+                INSERT INTO orders 
+                (order_number, client, address, delivery_date, comment, status)
+                VALUES (?, ?, ?, ?, ?, 'В работе')
+            """, order)
+            added += 1
+        except Exception:
             skipped += 1
 
     conn.commit()
