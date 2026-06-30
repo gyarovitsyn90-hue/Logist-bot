@@ -10,6 +10,7 @@ from telegram.ext import (
     filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 )
 import openpyxl
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
 from database import (
     init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders, 
@@ -353,18 +354,15 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-# === Экспорт в Excel с выбором даты ===
+# === Экспорт в Excel с выбором даты (улучшенная версия) ===
 async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     today = datetime.now()
 
-    # Сегодня
     keyboard.append([InlineKeyboardButton("Сегодня", callback_data=f"export_{today.strftime('%Y-%m-%d')}")])
-    # Завтра
     tomorrow = today + timedelta(days=1)
     keyboard.append([InlineKeyboardButton("Завтра", callback_data=f"export_{tomorrow.strftime('%Y-%m-%d')}")])
 
-    # Следующие 5 дней
     for i in range(2, 7):
         date = today + timedelta(days=i)
         keyboard.append([InlineKeyboardButton(date.strftime("%d.%m (%A)"), callback_data=f"export_{date.strftime('%Y-%m-%d')}")])
@@ -381,7 +379,7 @@ async def export_date_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     orders = get_orders_by_date(date_str)
 
     if not orders:
-        await query.edit_message_text(f"На {date_str} заказов нет.")
+        await query.edit_message_text(f"На дату {date_str} заказов нет.")
         return
 
     # Создаём Excel
@@ -389,16 +387,63 @@ async def export_date_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     sheet = workbook.active
     sheet.title = "Заказы"
 
+    # Стили
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
     # Заголовки
-    headers = ["Номер заказа", "Клиент", "Адрес", "Дата", "Машина", "Статус", "Комментарий"]
+    headers = ["№", "Номер заказа", "Клиент", "Адрес доставки", "Дата", "Машина", "Статус", "Комментарий"]
     sheet.append(headers)
 
-    for o in orders:
+    for col_num in range(1, len(headers) + 1):
+        cell = sheet.cell(row=1, column=col_num)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        cell.border = thin_border
+
+    # Данные
+    for idx, o in enumerate(orders, 1):
+        machine_info = f"{o[7]} ({o[8]})" if o[7] else "Не назначена"
         sheet.append([
-            o[1], o[2], o[3], o[4],
-            f"{o[7]} ({o[8]})" if o[7] else "Не назначена",
-            o[5], o[6]
+            idx,
+            o[1],
+            o[2],
+            o[3],
+            o[4],
+            machine_info,
+            o[5],
+            o[6] or ""
         ])
+
+        # Применяем границы
+        for col in range(1, 9):
+            sheet.cell(row=idx + 1, column=col).border = thin_border
+
+    # Строка Итого
+    total_row = len(orders) + 2
+    sheet.cell(row=total_row, column=1, value="ИТОГО ЗАКАЗОВ:")
+    sheet.cell(row=total_row, column=1).font = Font(bold=True, size=11)
+    sheet.cell(row=total_row, column=2, value=len(orders))
+    sheet.cell(row=total_row, column=2).font = Font(bold=True, size=11)
+
+    # Автоширина
+    for column in sheet.columns:
+        max_length = 0
+        column_letter = column[0].column_letter
+        for cell in column:
+            try:
+                if cell.value and len(str(cell.value)) > max_length:
+                    max_length = len(str(cell.value))
+            except:
+                pass
+        sheet.column_dimensions[column_letter].width = min(max_length + 2, 45)
 
     # Сохраняем в память
     output = BytesIO()
@@ -406,14 +451,15 @@ async def export_date_selected(update: Update, context: ContextTypes.DEFAULT_TYP
     output.seek(0)
 
     filename = f"Заказы_{date_str}.xlsx"
+
     await context.bot.send_document(
         chat_id=query.message.chat_id,
         document=output,
         filename=filename,
-        caption=f"Заказы на {date_str}"
+        caption=f"📦 Заказы на {date_str}\nВсего: {len(orders)}"
     )
 
-    await query.edit_message_text(f"Файл с заказами на {date_str} отправлен.")
+    await query.edit_message_text(f"✅ Файл с заказами на {date_str} отправлен.")
 
 
 def main():
@@ -463,7 +509,7 @@ def main():
     application.add_handler(CommandHandler("importorders", importorders))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    # Кнопка экспорта
+    # Кнопка экспорта + обработка выбора даты
     application.add_handler(MessageHandler(filters.Regex("^📤 Экспорт в Excel$"), export_excel))
     application.add_handler(CallbackQueryHandler(export_date_selected, pattern="^export_"))
 
