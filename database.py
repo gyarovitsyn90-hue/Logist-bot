@@ -126,3 +126,13 @@ def get_orders_by_date(target_date):
     orders = cursor.fetchall()
     conn.close()
     return orders
+
+
+def delete_order(order_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    return deleted > 0
