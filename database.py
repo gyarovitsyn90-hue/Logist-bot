@@ -79,25 +79,25 @@ def bulk_add_vehicles(vehicles_list):
     return added, skipped
 
 
-def bulk_add_orders(orders_list):
+def replace_all_vehicles(new_vehicles_list):
+    """Полностью очищает таблицу машин и вставляет новые"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    added, skipped = 0, 0
-
-    for order in orders_list:
+    cursor.execute("DELETE FROM vehicles")
+    added = 0
+    for v in new_vehicles_list:
         try:
             cursor.execute("""
-                INSERT INTO orders 
-                (order_number, client, address, delivery_date, comment, status)
-                VALUES (?, ?, ?, ?, ?, 'В работе')
-            """, order)
+                INSERT INTO vehicles 
+                (number, model, volume_m3, pallets, max_weight_kg, body_type, can_oversized, route_restrictions)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, v)
             added += 1
-        except Exception:
-            skipped += 1
-
+        except:
+            pass
     conn.commit()
     conn.close()
-    return added, skipped
+    return added
 
 
 def get_all_vehicles():
