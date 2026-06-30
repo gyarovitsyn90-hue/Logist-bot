@@ -204,6 +204,48 @@ async def addorder_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+async def importcars(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Пришли Excel-файл (.xlsx) со списком машин.\n\n"
+        "Название файла и листа может быть любым."
+    )
+    context.user_data["awaiting_file"] = True
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("awaiting_file"):
+        return
+
+    document = update.message.document
+    if not document.file_name.endswith((".xlsx", ".xls")):
+        await update.message.reply_text("Нужно прислать Excel-файл (.xlsx)")
+        return
+
+    file = await context.bot.get_file(document.file_id)
+    file_bytes = await file.download_as_bytearray()
+
+    workbook = openpyxl.load_workbook(BytesIO(file_bytes))
+    sheet = workbook.active
+
+    vehicles = []
+    for row in sheet.iter_rows(min_row=2, values_only=True):
+        if row[0]:
+            vehicles.append((
+                row[0], row[1], row[2] or 0, row[3] or 0,
+                row[4] or 0, row[7],
+                1 if "Негабарит: Да" in str(row[7]) else 0,
+                row[5]
+            ))
+
+    added, skipped = bulk_add_vehicles(vehicles)
+    await update.message.reply_text(
+        f"Импорт завершён!\n\n"
+        f"Добавлено: {added}\n"
+        f"Пропущено (дубликаты): {skipped}"
+    )
+    context.user_data["awaiting_file"] = False
+
+
 def main():
     init_db()
 
@@ -245,6 +287,8 @@ def main():
     application.add_handler(CommandHandler("cars", cars))
     application.add_handler(addcar_conv)
     application.add_handler(addorder_conv)
+    application.add_handler(CommandHandler("importcars", importcars))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
     print("[INFO] Бот запущен")
     application.run_polling()
