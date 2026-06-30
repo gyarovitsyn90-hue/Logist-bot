@@ -13,7 +13,7 @@ import openpyxl
 
 from database import (
     init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders, 
-    get_all_vehicles, get_orders_by_date, delete_order
+    get_all_vehicles, get_orders_by_date, delete_order, update_order_vehicle
 )
 
 # === Состояния для машин ===
@@ -54,6 +54,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/addorder — добавить заказ\n"
         "/orders — посмотреть заказы\n"
         "/deleteorder — удалить заказ\n"
+        "/changevehicle — сменить машину у заказа\n"
         "/importcars — загрузить машины из Excel\n"
         "/importorders — загрузить заказы из Excel"
     )
@@ -113,6 +114,31 @@ async def deleteorder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success = delete_order(order_id)
     if success:
         await update.message.reply_text(f"Заказ №{order_id} успешно удалён.")
+    else:
+        await update.message.reply_text(f"Заказ с ID {order_id} не найден.")
+
+
+async def changevehicle(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    if len(args) != 2:
+        await update.message.reply_text(
+            "Использование: /changevehicle <ID заказа> <ID новой машины>\n\n"
+            "Пример: /changevehicle 5 3"
+        )
+        return
+
+    try:
+        order_id = int(args[0])
+        new_vehicle_id = int(args[1])
+    except:
+        await update.message.reply_text("ID заказа и ID машины должны быть числами.")
+        return
+
+    success = update_order_vehicle(order_id, new_vehicle_id)
+    if success:
+        await update.message.reply_text(
+            f"У заказа №{order_id} успешно изменена машина на ID {new_vehicle_id}."
+        )
     else:
         await update.message.reply_text(f"Заказ с ID {order_id} не найден.")
 
@@ -366,6 +392,7 @@ def main():
     application.add_handler(CommandHandler("cars", cars))
     application.add_handler(CommandHandler("orders", orders))
     application.add_handler(CommandHandler("deleteorder", deleteorder))
+    application.add_handler(CommandHandler("changevehicle", changevehicle))
     application.add_handler(addcar_conv)
     application.add_handler(addorder_conv)
     application.add_handler(CommandHandler("importcars", importcars))
