@@ -28,12 +28,12 @@ from database import (
 ) = range(10, 15)
 
 
-# === Клавиатура меню ===
+# === Главное меню с смайликами ===
 def get_main_menu():
     keyboard = [
-        [KeyboardButton("Машины"), KeyboardButton("Заказы")],
-        [KeyboardButton("Добавить машину"), KeyboardButton("Добавить заказ")],
-        [KeyboardButton("Удалить заказ"), KeyboardButton("Сменить машину")]
+        [KeyboardButton("🚚 Машины"), KeyboardButton("📦 Заказы")],
+        [KeyboardButton("➕ Добавить машину"), KeyboardButton("➕ Добавить заказ")],
+        [KeyboardButton("🗑️ Удалить заказ"), KeyboardButton("🔄 Сменить машину")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -291,12 +291,57 @@ async def importorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_file"):
-        # ... (код импорта машин остаётся без изменений)
-        pass
+        document = update.message.document
+        if not document.file_name.endswith((".xlsx", ".xls")):
+            await update.message.reply_text("Нужно прислать Excel-файл (.xlsx)")
+            return
+
+        file = await context.bot.get_file(document.file_id)
+        file_bytes = await file.download_as_bytearray()
+        workbook = openpyxl.load_workbook(BytesIO(file_bytes))
+        sheet = workbook.active
+
+        vehicles = []
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if row[0]:
+                vehicles.append((
+                    row[0], row[1], row[2] or 0, row[3] or 0,
+                    row[4] or 0, row[7],
+                    1 if "Негабарит: Да" in str(row[7]) else 0,
+                    row[5]
+                ))
+
+        added, skipped = bulk_add_vehicles(vehicles)
+        await update.message.reply_text(
+            f"Импорт машин завершён!\nДобавлено: {added} | Пропущено: {skipped}"
+        )
+        context.user_data["awaiting_file"] = False
+        return
 
     if context.user_data.get("awaiting_order_file"):
-        # ... (код импорта заказов остаётся без изменений)
-        pass
+        document = update.message.document
+        if not document.file_name.endswith((".xlsx", ".xls")):
+            await update.message.reply_text("Нужно прислать Excel-файл (.xlsx)")
+            return
+
+        file = await context.bot.get_file(document.file_id)
+        file_bytes = await file.download_as_bytearray()
+        workbook = openpyxl.load_workbook(BytesIO(file_bytes))
+        sheet = workbook.active
+
+        orders = []
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if row[0]:
+                orders.append((
+                    row[0], row[1], row[2], row[3], row[4]
+                ))
+
+        added, skipped = bulk_add_orders(orders)
+        await update.message.reply_text(
+            f"Импорт заказов завершён!\nДобавлено: {added} | Пропущено: {skipped}"
+        )
+        context.user_data["awaiting_order_file"] = False
+        return
 
 
 def main():
@@ -346,13 +391,13 @@ def main():
     application.add_handler(CommandHandler("importorders", importorders))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    # Обработка нажатий кнопок меню
-    application.add_handler(MessageHandler(filters.Regex("^Машины$"), cars))
-    application.add_handler(MessageHandler(filters.Regex("^Заказы$"), orders))
-    application.add_handler(MessageHandler(filters.Regex("^Добавить машину$"), addcar_start))
-    application.add_handler(MessageHandler(filters.Regex("^Добавить заказ$"), addorder_start))
-    application.add_handler(MessageHandler(filters.Regex("^Удалить заказ$"), deleteorder))
-    application.add_handler(MessageHandler(filters.Regex("^Сменить машину$"), changevehicle))
+    # Обработка кнопок меню
+    application.add_handler(MessageHandler(filters.Regex("^🚚 Машины$"), cars))
+    application.add_handler(MessageHandler(filters.Regex("^📦 Заказы$"), orders))
+    application.add_handler(MessageHandler(filters.Regex("^➕ Добавить машину$"), addcar_start))
+    application.add_handler(MessageHandler(filters.Regex("^➕ Добавить заказ$"), addorder_start))
+    application.add_handler(MessageHandler(filters.Regex("^🗑️ Удалить заказ$"), deleteorder))
+    application.add_handler(MessageHandler(filters.Regex("^🔄 Сменить машину$"), changevehicle))
 
     print("[INFO] Бот запущен")
     application.run_polling()
