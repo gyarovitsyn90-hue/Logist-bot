@@ -28,12 +28,13 @@ from database import (
 ) = range(10, 15)
 
 
-# === Главное меню с смайликами ===
+# === Чистое меню (только актуальные функции) ===
 def get_main_menu():
     keyboard = [
         [KeyboardButton("🚚 Машины"), KeyboardButton("📦 Заказы")],
         [KeyboardButton("➕ Добавить машину"), KeyboardButton("➕ Добавить заказ")],
-        [KeyboardButton("🗑️ Удалить заказ"), KeyboardButton("🔄 Сменить машину")]
+        [KeyboardButton("🗑️ Удалить заказ"), KeyboardButton("🔄 Сменить машину")],
+        [KeyboardButton("📥 Импорт машин"), KeyboardButton("📥 Импорт заказов")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -391,13 +392,15 @@ def main():
     application.add_handler(CommandHandler("importorders", importorders))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    # Обработка кнопок меню
+    # === Обработка кнопок меню ===
     application.add_handler(MessageHandler(filters.Regex("^🚚 Машины$"), cars))
     application.add_handler(MessageHandler(filters.Regex("^📦 Заказы$"), orders))
     application.add_handler(MessageHandler(filters.Regex("^➕ Добавить машину$"), addcar_start))
     application.add_handler(MessageHandler(filters.Regex("^➕ Добавить заказ$"), addorder_start))
     application.add_handler(MessageHandler(filters.Regex("^🗑️ Удалить заказ$"), deleteorder))
     application.add_handler(MessageHandler(filters.Regex("^🔄 Сменить машину$"), changevehicle))
+    application.add_handler(MessageHandler(filters.Regex("^📥 Импорт машин$"), importcars))
+    application.add_handler(MessageHandler(filters.Regex("^📥 Импорт заказов$"), importorders))
 
     print("[INFO] Бот запущен")
     application.run_polling()
