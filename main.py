@@ -11,7 +11,10 @@ from telegram.ext import (
 )
 import openpyxl
 
-from database import init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders, get_all_vehicles
+from database import (
+    init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders, 
+    get_all_vehicles, get_orders_by_date
+)
 
 # === Состояния для машин ===
 (
@@ -49,6 +52,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/cars — список машин\n"
         "/addcar — добавить машину\n"
         "/addorder — добавить заказ\n"
+        "/orders — посмотреть заказы\n"
         "/importcars — загрузить машины из Excel\n"
         "/importorders — загрузить заказы из Excel"
     )
@@ -64,6 +68,30 @@ async def cars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for v in vehicles:
         text += f"ID {v[0]} | {v[1]} | {v[2]} | {v[3]}м³ | {v[4]} паллет\n"
     await update.message.reply_text(text)
+
+
+async def orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    today = datetime.now().strftime("%Y-%m-%d")
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    orders_today = get_orders_by_date(today)
+    orders_tomorrow = get_orders_by_date(tomorrow)
+
+    text = "📅 **Заказы на сегодня:**\n\n"
+    if orders_today:
+        for o in orders_today:
+            text += f"• {o[1]} | {o[3]} | Машина: {o[7] or 'не назначена'}\n"
+    else:
+        text += "Заказов нет\n"
+
+    text += "\n📅 **Заказы на завтра:**\n\n"
+    if orders_tomorrow:
+        for o in orders_tomorrow:
+            text += f"• {o[1]} | {o[3]} | Машина: {o[7] or 'не назначена'}\n"
+    else:
+        text += "Заказов нет\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 # === Разговорное добавление машины ===
@@ -222,7 +250,6 @@ async def importorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # === Импорт машин ===
     if context.user_data.get("awaiting_file"):
         document = update.message.document
         if not document.file_name.endswith((".xlsx", ".xls")):
@@ -251,7 +278,6 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting_file"] = False
         return
 
-    # === Импорт заказов ===
     if context.user_data.get("awaiting_order_file"):
         document = update.message.document
         if not document.file_name.endswith((".xlsx", ".xls")):
@@ -267,11 +293,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for row in sheet.iter_rows(min_row=2, values_only=True):
             if row[0]:
                 orders.append((
-                    row[0],                    # order_number
-                    row[1],                    # client
-                    row[2],                    # address
-                    row[3],                    # delivery_date
-                    row[4]                     # comment
+                    row[0], row[1], row[2], row[3], row[4]
                 ))
 
         added, skipped = bulk_add_orders(orders)
@@ -290,7 +312,6 @@ def main():
 
     application = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
 
-    # Разговорное добавление машины
     addcar_conv = ConversationHandler(
         entry_points=[CommandHandler("addcar", addcar_start)],
         states={
@@ -306,7 +327,6 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
-    # Разговорное добавление заказа
     addorder_conv = ConversationHandler(
         entry_points=[CommandHandler("addorder", addorder_start)],
         states={
@@ -321,6 +341,7 @@ def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cars", cars))
+    application.add_handler(CommandHandler("orders", orders))
     application.add_handler(addcar_conv)
     application.add_handler(addorder_conv)
     application.add_handler(CommandHandler("importcars", importcars))
