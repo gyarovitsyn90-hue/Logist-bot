@@ -155,22 +155,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_bytes = await file.download_as_bytearray()
 
     workbook = openpyxl.load_workbook(BytesIO(file_bytes))
-    
-    # Берём первый лист (без привязки к названию)
     sheet = workbook.active
 
     vehicles = []
     for row in sheet.iter_rows(min_row=2, values_only=True):
-        if row[0]:  # первая колонка = Госномер
+        if row[0]:
             vehicles.append((
-                row[0],                    # number
-                row[1],                    # model
-                row[2] or 0,               # volume_m3
-                row[3] or 0,               # pallets
-                row[4] or 0,               # max_weight_kg
-                row[7],                    # body_type / Ограничения
+                row[0], row[1], row[2] or 0, row[3] or 0,
+                row[4] or 0, row[7],
                 1 if "Негабарит: Да" in str(row[7]) else 0,
-                row[5]                     # route_restrictions
+                row[5]
             ))
 
     added, skipped = bulk_add_vehicles(vehicles)
@@ -190,7 +184,6 @@ def main():
 
     application = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
 
-    # Разговорное добавление машины
     addcar_conv = ConversationHandler(
         entry_points=[CommandHandler("addcar", addcar_start)],
         states={
