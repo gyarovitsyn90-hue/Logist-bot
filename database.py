@@ -110,3 +110,19 @@ def get_all_vehicles():
     vehicles = cursor.fetchall()
     conn.close()
     return vehicles
+
+
+def get_orders_by_date(target_date):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT o.id, o.order_number, o.client, o.address, o.delivery_date,
+               o.status, o.comment, v.number, v.model
+        FROM orders o
+        LEFT JOIN vehicles v ON o.vehicle_id = v.id
+        WHERE o.delivery_date = ?
+        ORDER BY o.id
+    """, (target_date,))
+    orders = cursor.fetchall()
+    conn.close()
+    return orders
