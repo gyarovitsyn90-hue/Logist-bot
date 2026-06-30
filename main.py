@@ -4,10 +4,10 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from io import BytesIO
 from datetime import datetime, timedelta
 
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, 
-    filters, ContextTypes, ConversationHandler
+    filters, ContextTypes, ConversationHandler, CallbackQueryHandler
 )
 import openpyxl
 
@@ -34,7 +34,8 @@ def get_main_menu():
         [KeyboardButton("🚚 Машины"), KeyboardButton("📦 Заказы")],
         [KeyboardButton("➕ Добавить машину"), KeyboardButton("➕ Добавить заказ")],
         [KeyboardButton("🗑️ Удалить заказ"), KeyboardButton("🔄 Сменить машину")],
-        [KeyboardButton("📥 Импорт машин"), KeyboardButton("📥 Импорт заказов")]
+        [KeyboardButton("📥 Импорт машин"), KeyboardButton("📥 Импорт заказов")],
+        [KeyboardButton("📤 Экспорт в Excel")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -352,6 +353,69 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+# === Экспорт в Excel с выбором даты ===
+async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = []
+    today = datetime.now()
+
+    # Сегодня
+    keyboard.append([InlineKeyboardButton("Сегодня", callback_data=f"export_{today.strftime('%Y-%m-%d')}")])
+    # Завтра
+    tomorrow = today + timedelta(days=1)
+    keyboard.append([InlineKeyboardButton("Завтра", callback_data=f"export_{tomorrow.strftime('%Y-%m-%d')}")])
+
+    # Следующие 5 дней
+    for i in range(2, 7):
+        date = today + timedelta(days=i)
+        keyboard.append([InlineKeyboardButton(date.strftime("%d.%m (%A)"), callback_data=f"export_{date.strftime('%Y-%m-%d')}")])
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Выберите дату для экспорта:", reply_markup=reply_markup)
+
+
+async def export_date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    date_str = query.data.replace("export_", "")
+    orders = get_orders_by_date(date_str)
+
+    if not orders:
+        await query.edit_message_text(f"На {date_str} заказов нет.")
+        return
+
+    # Создаём Excel
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Заказы"
+
+    # Заголовки
+    headers = ["Номер заказа", "Клиент", "Адрес", "Дата", "Машина", "Статус", "Комментарий"]
+    sheet.append(headers)
+
+    for o in orders:
+        sheet.append([
+            o[1], o[2], o[3], o[4],
+            f"{o[7]} ({o[8]})" if o[7] else "Не назначена",
+            o[5], o[6]
+        ])
+
+    # Сохраняем в память
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+
+    filename = f"Заказы_{date_str}.xlsx"
+    await context.bot.send_document(
+        chat_id=query.message.chat_id,
+        document=output,
+        filename=filename,
+        caption=f"Заказы на {date_str}"
+    )
+
+    await query.edit_message_text(f"Файл с заказами на {date_str} отправлен.")
+
+
 def main():
     init_db()
 
@@ -398,6 +462,10 @@ def main():
     application.add_handler(CommandHandler("importcars", importcars))
     application.add_handler(CommandHandler("importorders", importorders))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+
+    # Кнопка экспорта
+    application.add_handler(MessageHandler(filters.Regex("^📤 Экспорт в Excel$"), export_excel))
+    application.add_handler(CallbackQueryHandler(export_date_selected, pattern="^export_"))
 
     # Обработка кнопок меню
     application.add_handler(MessageHandler(filters.Regex("^🚚 Машины$"), cars))
