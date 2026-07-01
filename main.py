@@ -15,7 +15,8 @@ from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
 from database import (
     init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders, 
-    get_all_vehicles, get_orders_by_date, delete_order, update_order_vehicle, replace_all_vehicles
+    get_all_vehicles, get_orders_by_date, delete_order, update_order_vehicle, 
+    replace_all_vehicles, can_vehicle_accept_order, get_vehicle_current_load
 )
 
 # === Состояния ===
@@ -26,8 +27,8 @@ from database import (
 
 (
     ORDER_NUMBER, ORDER_ADDRESS, ORDER_DATE, 
-    ORDER_VEHICLE, ORDER_COMMENT
-) = range(10, 15)
+    ORDER_VEHICLE, ORDER_PALLETS, ORDER_VOLUME, ORDER_COMMENT
+) = range(10, 17)
 
 
 # === Главное меню ===
@@ -220,7 +221,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# === Разговорное добавление заказа ===
+# === Разговорное добавление заказа с проверкой вместимости ===
 async def addorder_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Введите номер заказа или название клиента:")
     return ORDER_NUMBER
@@ -261,12 +262,46 @@ async def addorder_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def addorder_vehicle(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        context.user_data["vehicle_id"] = int(update.message.text)
+        vehicle_id = int(update.message.text)
     except:
         await update.message.reply_text("Введите ID машины цифрами.")
         return ORDER_VEHICLE
 
-    await update.message.reply_text("Комментарий (или - ):")
+    context.user_data["vehicle_id"] = vehicle_id
+    await update.message.reply_text("Сколько паллет занимает заказ?")
+    return ORDER_PALLETS
+
+
+async def addorder_pallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        context.user_data["order_pallets"] = int(update.message.text)
+    except:
+        await update.message.reply_text("Введите количество паллет цифрами.")
+        return ORDER_PALLETS
+
+    await update.message.reply_text("Какой объём в м³ занимает заказ? (или 0)")
+    return ORDER_VOLUME
+
+
+async def addorder_volume(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        context.user_data["order_volume"] = float(update.message.text)
+    except:
+        await update.message.reply_text("Введите объём цифрами (например 12.5)")
+        return ORDER_VOLUME
+
+    vehicle_id = context.user_data["vehicle_id"]
+    pallets = context.user_data["order_pallets"]
+    volume = context.user_data["order_volume"]
+
+    can_accept, message = can_vehicle_accept_order(vehicle_id, pallets, volume)
+
+    if not can_accept:
+        await update.message.reply_text(f"❌ Нельзя добавить заказ: {message}")
+        context.user_data.clear()
+        return ConversationHandler.END
+
+    await update.message.reply_text("Комментарий к заказу (или напиши - ):")
     return ORDER_COMMENT
 
 
@@ -275,12 +310,14 @@ async def addorder_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["comment"] = comment
     data = context.user_data
 
+    # Здесь сохраняем заказ (пока без сохранения в базу — добавим позже)
     await update.message.reply_text(
-        f"Заказ создан!\n\n"
+        f"✅ Заказ создан!\n\n"
         f"Номер: {data['order_number']}\n"
         f"Адрес: {data['address']}\n"
         f"Дата: {data['delivery_date']}\n"
-        f"Машина ID: {data['vehicle_id']}"
+        f"Машина ID: {data['vehicle_id']}\n"
+        f"Паллеты: {data['order_pallets']} | Объём: {data['order_volume']} м³"
     )
 
     context.user_data.clear()
@@ -344,7 +381,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for row in sheet.iter_rows(min_row=2, values_only=True):
             if row[0]:
                 orders.append((
-                    row[0], row[1], row[2], row[3], row[4]
+                    row[0],                    # order_number
+                    row[1],                    # client
+                    row[2],                    # address
+                    row[3],                    # delivery_date
+                    row[4],                    # comment
+                    row[5] or 0,               # pallets
+                    row[6] or 0                # volume_m3
                 ))
 
         added, skipped = bulk_add_orders(orders)
@@ -355,7 +398,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-# === Отчёт по загрузке машин (сегодня + завтра) ===
+# === Отчёт по загрузке машин ===
 async def load_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today = datetime.now().strftime("%Y-%m-%d")
     tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -385,7 +428,7 @@ async def load_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(report, parse_mode="Markdown")
 
 
-# === Экспорт в Excel с выбором даты ===
+# === Экспорт в Excel ===
 async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     today = datetime.now()
@@ -507,6 +550,8 @@ def main():
             ORDER_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, addorder_address)],
             ORDER_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, addorder_date)],
             ORDER_VEHICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, addorder_vehicle)],
+            ORDER_PALLETS: [MessageHandler(filters.TEXT & ~filters.COMMAND, addorder_pallets)],
+            ORDER_VOLUME: [MessageHandler(filters.TEXT & ~filters.COMMAND, addorder_volume)],
             ORDER_COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, addorder_comment)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -537,7 +582,6 @@ def main():
     application.add_handler(MessageHandler(filters.Regex("^📥 Импорт машин$"), importcars))
     application.add_handler(MessageHandler(filters.Regex("^📥 Импорт заказов$"), importorders))
 
-    # Callback для экспорта
     application.add_handler(CallbackQueryHandler(export_date_selected, pattern="^export_"))
 
     print("[INFO] Бот запущен")
