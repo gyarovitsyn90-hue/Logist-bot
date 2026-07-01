@@ -14,9 +14,9 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
 from database import (
-    init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders, 
+    init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders_safe,
     get_all_vehicles, get_orders_by_date, delete_order, update_order_vehicle, 
-    replace_all_vehicles, can_vehicle_accept_order, get_vehicle_current_load
+    replace_all_vehicles, can_vehicle_accept_order
 )
 
 # === Состояния ===
@@ -287,7 +287,7 @@ async def addorder_volume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         context.user_data["order_volume"] = float(update.message.text)
     except:
-        await update.message.reply_text("Введите объём цифрами (например 12.5)")
+        await update.message.reply_text("Введите объём цифрами.")
         return ORDER_VOLUME
 
     vehicle_id = context.user_data["vehicle_id"]
@@ -310,7 +310,6 @@ async def addorder_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["comment"] = comment
     data = context.user_data
 
-    # Здесь сохраняем заказ (пока без сохранения в базу — добавим позже)
     await update.message.reply_text(
         f"✅ Заказ создан!\n\n"
         f"Номер: {data['order_number']}\n"
@@ -333,7 +332,10 @@ async def importcars(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def importorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Пришли Excel-файл с заказами.")
+    await update.message.reply_text(
+        "Пришли Excel-файл с заказами.\n\n"
+        "Колонки: order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_number"
+    )
     context.user_data["awaiting_order_file"] = True
 
 
@@ -379,21 +381,21 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         orders = []
         for row in sheet.iter_rows(min_row=2, values_only=True):
-            if row[0]:
+            if row[0] and row[7]:  # есть номер заказа и номер машины
                 orders.append((
-                    row[0],                    # order_number
-                    row[1],                    # client
-                    row[2],                    # address
-                    row[3],                    # delivery_date
-                    row[4],                    # comment
-                    row[5] or 0,               # pallets
-                    row[6] or 0                # volume_m3
+                    row[0], row[1], row[2], row[3], row[4],
+                    row[5] or 0, row[6] or 0, row[7]
                 ))
 
-        added, skipped = bulk_add_orders(orders)
-        await update.message.reply_text(
-            f"Импорт заказов завершён!\nДобавлено: {added} | Пропущено: {skipped}"
-        )
+        added, skipped, reasons = bulk_add_orders_safe(orders)
+
+        text = f"Импорт завершён!\nДобавлено: {added} | Пропущено: {skipped}"
+        if reasons:
+            text += "\n\nПричины пропуска:\n" + "\n".join(reasons[:10])
+            if len(reasons) > 10:
+                text += f"\n... и ещё {len(reasons) - 10}"
+
+        await update.message.reply_text(text)
         context.user_data["awaiting_order_file"] = False
         return
 
