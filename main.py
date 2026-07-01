@@ -30,7 +30,6 @@ from database import (
     ORDER_VEHICLE, ORDER_PALLETS, ORDER_VOLUME, ORDER_COMMENT
 ) = range(10, 17)
 
-# Состояния для истории по клиенту
 (CLIENT_NAME, CLIENT_PERIOD) = range(20, 22)
 
 
@@ -630,6 +629,8 @@ def main():
             CLIENT_PERIOD: [CallbackQueryHandler(client_period_selected, pattern="^period_")],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True
     )
 
     application.add_handler(CommandHandler("start", start))
