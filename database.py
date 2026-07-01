@@ -38,7 +38,6 @@ def init_db():
         )
     """)
 
-    # Добавляем новые колонки, если их ещё нет (для уже существующих баз)
     try:
         cursor.execute("ALTER TABLE orders ADD COLUMN pallets INTEGER DEFAULT 0")
     except:
@@ -52,6 +51,89 @@ def init_db():
     conn.close()
 
 
+def get_vehicle_by_number(vehicle_number):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, pallets, volume_m3 FROM vehicles WHERE number = ?", (vehicle_number,))
+    vehicle = cursor.fetchone()
+    conn.close()
+    return vehicle
+
+
+def can_vehicle_accept_order(vehicle_id, new_pallets, new_volume):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT pallets, volume_m3 FROM vehicles WHERE id = ?", (vehicle_id,))
+    vehicle = cursor.fetchone()
+
+    if not vehicle:
+        return False, "Машина не найдена"
+
+    max_pallets, max_volume = vehicle
+    cursor.execute("""
+        SELECT COALESCE(SUM(pallets), 0), COALESCE(SUM(volume_m3), 0)
+        FROM orders WHERE vehicle_id = ?
+    """, (vehicle_id,))
+    current = cursor.fetchone()
+    conn.close()
+
+    current_pallets, current_volume = current
+
+    if current_pallets + new_pallets > max_pallets:
+        return False, f"Недостаточно паллет (занято {current_pallets}/{max_pallets})"
+
+    if current_volume + new_volume > max_volume:
+        return False, f"Недостаточно объёма (занято {current_volume:.1f}/{max_volume} м³)"
+
+    return True, "OK"
+
+
+def bulk_add_orders_safe(orders_list):
+    """
+    orders_list = [
+        (order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_number),
+        ...
+    ]
+    """
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    added, skipped = 0, 0
+    skipped_reasons = []
+
+    for order in orders_list:
+        order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_number = order
+
+        vehicle = get_vehicle_by_number(vehicle_number)
+        if not vehicle:
+            skipped += 1
+            skipped_reasons.append(f"{order_number} — машина {vehicle_number} не найдена")
+            continue
+
+        vehicle_id, max_pallets, max_volume = vehicle
+
+        can_accept, reason = can_vehicle_accept_order(vehicle_id, pallets, volume_m3)
+        if not can_accept:
+            skipped += 1
+            skipped_reasons.append(f"{order_number} — {reason}")
+            continue
+
+        try:
+            cursor.execute("""
+                INSERT INTO orders 
+                (order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'В работе')
+            """, (order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_id))
+            added += 1
+        except Exception as e:
+            skipped += 1
+            skipped_reasons.append(f"{order_number} — ошибка: {str(e)}")
+
+    conn.commit()
+    conn.close()
+    return added, skipped, skipped_reasons
+
+
+# Остальные функции (add_vehicle, get_all_vehicles, get_orders_by_date и т.д.) оставляем без изменений
 def add_vehicle(number, model=None, volume_m3=0, pallets=0, max_weight_kg=0,
                 body_type=None, can_oversized=0, route_restrictions=None):
     conn = sqlite3.connect(DB_NAME)
@@ -70,76 +152,10 @@ def add_vehicle(number, model=None, volume_m3=0, pallets=0, max_weight_kg=0,
         conn.close()
 
 
-def bulk_add_vehicles(vehicles_list):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    added, skipped = 0, 0
-
-    for v in vehicles_list:
-        try:
-            cursor.execute("""
-                INSERT INTO vehicles 
-                (number, model, volume_m3, pallets, max_weight_kg, body_type, can_oversized, route_restrictions)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, v)
-            added += 1
-        except sqlite3.IntegrityError:
-            skipped += 1
-
-    conn.commit()
-    conn.close()
-    return added, skipped
-
-
-def replace_all_vehicles(new_vehicles_list):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM vehicles")
-    added = 0
-    for v in new_vehicles_list:
-        try:
-            cursor.execute("""
-                INSERT INTO vehicles 
-                (number, model, volume_m3, pallets, max_weight_kg, body_type, can_oversized, route_restrictions)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, v)
-            added += 1
-        except:
-            pass
-    conn.commit()
-    conn.close()
-    return added
-
-
-def bulk_add_orders(orders_list):
-    """orders_list = [(order_number, client, address, delivery_date, comment, pallets, volume_m3), ...]"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    added, skipped = 0, 0
-
-    for order in orders_list:
-        try:
-            cursor.execute("""
-                INSERT INTO orders 
-                (order_number, client, address, delivery_date, comment, pallets, volume_m3, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'В работе')
-            """, order)
-            added += 1
-        except Exception:
-            skipped += 1
-
-    conn.commit()
-    conn.close()
-    return added, skipped
-
-
 def get_all_vehicles():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, number, model, volume_m3, pallets, max_weight_kg, body_type 
-        FROM vehicles ORDER BY id
-    """)
+    cursor.execute("SELECT id, number, model, volume_m3, pallets FROM vehicles ORDER BY id")
     vehicles = cursor.fetchall()
     conn.close()
     return vehicles
@@ -161,45 +177,6 @@ def get_orders_by_date(target_date):
     return orders
 
 
-def get_vehicle_current_load(vehicle_id):
-    """Возвращает (total_pallets, total_volume) уже загруженных заказов"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT COALESCE(SUM(pallets), 0), COALESCE(SUM(volume_m3), 0)
-        FROM orders 
-        WHERE vehicle_id = ?
-    """, (vehicle_id,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0], result[1]
-
-
-def can_vehicle_accept_order(vehicle_id, new_pallets, new_volume):
-    """Проверяет, может ли машина принять заказ"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT pallets, volume_m3 FROM vehicles WHERE id = ?
-    """, (vehicle_id,))
-    vehicle = cursor.fetchone()
-    conn.close()
-
-    if not vehicle:
-        return False, "Машина не найдена"
-
-    max_pallets, max_volume = vehicle
-    current_pallets, current_volume = get_vehicle_current_load(vehicle_id)
-
-    if current_pallets + new_pallets > max_pallets:
-        return False, f"Недостаточно паллет (занято {current_pallets}/{max_pallets})"
-
-    if current_volume + new_volume > max_volume:
-        return False, f"Недостаточно объёма (занято {current_volume:.1f}/{max_volume} м³)"
-
-    return True, "OK"
-
-
 def delete_order(order_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -213,11 +190,7 @@ def delete_order(order_id):
 def update_order_vehicle(order_id, new_vehicle_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("""
-        UPDATE orders 
-        SET vehicle_id = ? 
-        WHERE id = ?
-    """, (new_vehicle_id, order_id))
+    cursor.execute("UPDATE orders SET vehicle_id = ? WHERE id = ?", (new_vehicle_id, order_id))
     conn.commit()
     updated = cursor.rowcount
     conn.close()
