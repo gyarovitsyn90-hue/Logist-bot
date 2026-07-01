@@ -14,9 +14,9 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
 from database import (
-    init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders_safe,
+    init_db, add_vehicle, bulk_add_vehicles, 
     get_all_vehicles, get_orders_by_date, delete_order, update_order_vehicle, 
-    replace_all_vehicles, can_vehicle_accept_order
+    replace_all_vehicles, can_vehicle_accept_order, get_client_stats, get_client_orders
 )
 
 # === Состояния ===
@@ -30,6 +30,9 @@ from database import (
     ORDER_VEHICLE, ORDER_PALLETS, ORDER_VOLUME, ORDER_COMMENT
 ) = range(10, 17)
 
+# Новые состояния для истории по клиенту
+(CLIENT_NAME, CLIENT_PERIOD) = range(20, 22)
+
 
 # === Главное меню ===
 def get_main_menu():
@@ -38,7 +41,8 @@ def get_main_menu():
         [KeyboardButton("➕ Добавить машину"), KeyboardButton("➕ Добавить заказ")],
         [KeyboardButton("🗑️ Удалить заказ"), KeyboardButton("🔄 Сменить машину")],
         [KeyboardButton("📊 Отчёт по загрузке"), KeyboardButton("📤 Экспорт в Excel")],
-        [KeyboardButton("📥 Импорт машин"), KeyboardButton("📥 Импорт заказов")]
+        [KeyboardButton("📥 Импорт машин"), KeyboardButton("📥 Импорт заказов")],
+        [KeyboardButton("📋 История по клиенту")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -221,7 +225,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# === Разговорное добавление заказа с проверкой вместимости ===
+# === Разговорное добавление заказа ===
 async def addorder_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Введите номер заказа или название клиента:")
     return ORDER_NUMBER
@@ -295,7 +299,6 @@ async def addorder_volume(update: Update, context: ContextTypes.DEFAULT_TYPE):
     volume = context.user_data["order_volume"]
 
     can_accept, message = can_vehicle_accept_order(vehicle_id, pallets, volume)
-
     if not can_accept:
         await update.message.reply_text(f"❌ Нельзя добавить заказ: {message}")
         context.user_data.clear()
@@ -332,10 +335,7 @@ async def importcars(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def importorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Пришли Excel-файл с заказами.\n\n"
-        "Колонки: order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_number"
-    )
+    await update.message.reply_text("Пришли Excel-файл с заказами.")
     context.user_data["awaiting_order_file"] = True
 
 
@@ -381,145 +381,87 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         orders = []
         for row in sheet.iter_rows(min_row=2, values_only=True):
-            if row[0] and row[7]:  # есть номер заказа и номер машины
+            if row[0] and row[7]:
                 orders.append((
                     row[0], row[1], row[2], row[3], row[4],
                     row[5] or 0, row[6] or 0, row[7]
                 ))
 
         added, skipped, reasons = bulk_add_orders_safe(orders)
-
         text = f"Импорт завершён!\nДобавлено: {added} | Пропущено: {skipped}"
         if reasons:
-            text += "\n\nПричины пропуска:\n" + "\n".join(reasons[:10])
-            if len(reasons) > 10:
-                text += f"\n... и ещё {len(reasons) - 10}"
-
+            text += "\n\nПричины пропуска:\n" + "\n".join(reasons[:8])
         await update.message.reply_text(text)
         context.user_data["awaiting_order_file"] = False
         return
 
 
-# === Отчёт по загрузке машин ===
-async def load_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    today = datetime.now().strftime("%Y-%m-%d")
-    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    orders_today = get_orders_by_date(today)
-    orders_tomorrow = get_orders_by_date(tomorrow)
-
-    def generate_report(orders, title):
-        if not orders:
-            return f"{title}\nЗаказов нет\n"
-
-        load = defaultdict(int)
-        for o in orders:
-            machine = f"{o[7]} ({o[8]})" if o[7] else "Не назначена"
-            load[machine] += 1
-
-        text = f"{title}\n"
-        for machine, count in sorted(load.items()):
-            text += f"• {machine}: {count} заказ(ов)\n"
-        return text
-
-    report = "📊 **Отчёт по загрузке машин**\n\n"
-    report += generate_report(orders_today, "📅 Сегодня:")
-    report += "\n"
-    report += generate_report(orders_tomorrow, "📅 Завтра:")
-
-    await update.message.reply_text(report, parse_mode="Markdown")
+# === История по клиенту ===
+async def client_history_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Введите название клиента:")
+    return CLIENT_NAME
 
 
-# === Экспорт в Excel ===
-async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = []
-    today = datetime.now()
+async def client_name_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["client_name"] = update.message.text
 
-    keyboard.append([InlineKeyboardButton("Сегодня", callback_data=f"export_{today.strftime('%Y-%m-%d')}")])
-    tomorrow = today + timedelta(days=1)
-    keyboard.append([InlineKeyboardButton("Завтра", callback_data=f"export_{tomorrow.strftime('%Y-%m-%d')}")])
-
-    for i in range(2, 7):
-        date = today + timedelta(days=i)
-        keyboard.append([InlineKeyboardButton(date.strftime("%d.%m (%A)"), callback_data=f"export_{date.strftime('%Y-%m-%d')}")])
-
+    keyboard = [
+        [InlineKeyboardButton("Текущий месяц", callback_data="period_current")],
+        [InlineKeyboardButton("Последние 3 месяца", callback_data="period_3")],
+        [InlineKeyboardButton("Последние 6 месяцев", callback_data="period_6")],
+        [InlineKeyboardButton("Последние 9 месяцев", callback_data="period_9")],
+        [InlineKeyboardButton("Последние 12 месяцев", callback_data="period_12")],
+    ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("Выберите дату для экспорта:", reply_markup=reply_markup)
+    await update.message.reply_text("Выберите период:", reply_markup=reply_markup)
+    return CLIENT_PERIOD
 
 
-async def export_date_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def client_period_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    date_str = query.data.replace("export_", "")
-    orders = get_orders_by_date(date_str)
+    period = query.data
+    client_name = context.user_data.get("client_name", "")
 
-    if not orders:
-        await query.edit_message_text(f"На дату {date_str} заказов нет.")
-        return
+    today = datetime.now()
+    if period == "period_current":
+        start_date = today.replace(day=1).strftime("%Y-%m-%d")
+        end_date = today.strftime("%Y-%m-%d")
+        period_name = "текущий месяц"
+    elif period == "period_3":
+        start_date = (today - timedelta(days=90)).strftime("%Y-%m-%d")
+        end_date = today.strftime("%Y-%m-%d")
+        period_name = "последние 3 месяца"
+    elif period == "period_6":
+        start_date = (today - timedelta(days=180)).strftime("%Y-%m-%d")
+        end_date = today.strftime("%Y-%m-%d")
+        period_name = "последние 6 месяца"
+    elif period == "period_9":
+        start_date = (today - timedelta(days=270)).strftime("%Y-%m-%d")
+        end_date = today.strftime("%Y-%m-%d")
+        period_name = "последние 9 месяцев"
+    else:
+        start_date = (today - timedelta(days=365)).strftime("%Y-%m-%d")
+        end_date = today.strftime("%Y-%m-%d")
+        period_name = "последние 12 месяцев"
 
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-    sheet.title = "Заказы"
+    stats = get_client_stats(client_name, start_date, end_date)
 
-    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-    header_font = Font(bold=True, color="FFFFFF", size=11)
-    thin_border = Border(
-        left=Side(style='thin'),
-        right=Side(style='thin'),
-        top=Side(style='thin'),
-        bottom=Side(style='thin')
-    )
+    if stats and stats[0] > 0:
+        text = (
+            f"📋 **История по клиенту:** {client_name}\n"
+            f"📅 Период: {period_name}\n\n"
+            f"• Количество заказов: **{stats[0]}**\n"
+            f"• Перевезено паллет: **{stats[1]}**\n"
+            f"• Перевезено объёма: **{stats[2]:.1f} м³**"
+        )
+    else:
+        text = f"По клиенту **{client_name}** за {period_name} заказов не найдено."
 
-    headers = ["№", "Номер заказа", "Клиент", "Адрес доставки", "Дата", "Машина", "Статус", "Комментарий"]
-    sheet.append(headers)
-
-    for col_num in range(1, len(headers) + 1):
-        cell = sheet.cell(row=1, column=col_num)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = Alignment(horizontal='center', vertical='center')
-        cell.border = thin_border
-
-    for idx, o in enumerate(orders, 1):
-        machine_info = f"{o[7]} ({o[8]})" if o[7] else "Не назначена"
-        sheet.append([
-            idx, o[1], o[2], o[3], o[4], machine_info, o[5], o[6] or ""
-        ])
-        for col in range(1, 9):
-            sheet.cell(row=idx + 1, column=col).border = thin_border
-
-    total_row = len(orders) + 2
-    sheet.cell(row=total_row, column=1, value="ИТОГО ЗАКАЗОВ:")
-    sheet.cell(row=total_row, column=1).font = Font(bold=True, size=11)
-    sheet.cell(row=total_row, column=2, value=len(orders))
-    sheet.cell(row=total_row, column=2).font = Font(bold=True, size=11)
-
-    for column in sheet.columns:
-        max_length = 0
-        column_letter = column[0].column_letter
-        for cell in column:
-            try:
-                if cell.value and len(str(cell.value)) > max_length:
-                    max_length = len(str(cell.value))
-            except:
-                pass
-        sheet.column_dimensions[column_letter].width = min(max_length + 2, 45)
-
-    output = BytesIO()
-    workbook.save(output)
-    output.seek(0)
-
-    filename = f"Заказы_{date_str}.xlsx"
-
-    await context.bot.send_document(
-        chat_id=query.message.chat_id,
-        document=output,
-        filename=filename,
-        caption=f"📦 Заказы на {date_str}\nВсего: {len(orders)}"
-    )
-
-    await query.edit_message_text(f"✅ Файл с заказами на {date_str} отправлен.")
+    await query.edit_message_text(text, parse_mode="Markdown")
+    context.user_data.clear()
+    return ConversationHandler.END
 
 
 def main():
@@ -559,6 +501,15 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
+    client_history_conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^📋 История по клиенту$"), client_history_start)],
+        states={
+            CLIENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, client_name_received)],
+            CLIENT_PERIOD: [CallbackQueryHandler(client_period_selected, pattern="^period_")],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("menu", show_menu))
     application.add_handler(CommandHandler("cars", cars))
@@ -568,6 +519,7 @@ def main():
     application.add_handler(CommandHandler("loadreport", load_report))
     application.add_handler(addcar_conv)
     application.add_handler(addorder_conv)
+    application.add_handler(client_history_conv)
     application.add_handler(CommandHandler("importcars", importcars))
     application.add_handler(CommandHandler("importorders", importorders))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
