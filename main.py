@@ -3,6 +3,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from io import BytesIO
 from datetime import datetime, timedelta
+from collections import defaultdict
 
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -35,8 +36,8 @@ def get_main_menu():
         [KeyboardButton("🚚 Машины"), KeyboardButton("📦 Заказы")],
         [KeyboardButton("➕ Добавить машину"), KeyboardButton("➕ Добавить заказ")],
         [KeyboardButton("🗑️ Удалить заказ"), KeyboardButton("🔄 Сменить машину")],
-        [KeyboardButton("📥 Импорт машин"), KeyboardButton("📥 Импорт заказов")],
-        [KeyboardButton("📤 Экспорт в Excel")]
+        [KeyboardButton("📊 Отчёт по загрузке"), KeyboardButton("📤 Экспорт в Excel")],
+        [KeyboardButton("📥 Импорт машин"), KeyboardButton("📥 Импорт заказов")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -354,7 +355,37 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-# === Экспорт в Excel с выбором даты (улучшенная версия) ===
+# === Отчёт по загрузке машин (сегодня + завтра) ===
+async def load_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    today = datetime.now().strftime("%Y-%m-%d")
+    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    orders_today = get_orders_by_date(today)
+    orders_tomorrow = get_orders_by_date(tomorrow)
+
+    def generate_report(orders, title):
+        if not orders:
+            return f"{title}\nЗаказов нет\n"
+
+        load = defaultdict(int)
+        for o in orders:
+            machine = f"{o[7]} ({o[8]})" if o[7] else "Не назначена"
+            load[machine] += 1
+
+        text = f"{title}\n"
+        for machine, count in sorted(load.items()):
+            text += f"• {machine}: {count} заказ(ов)\n"
+        return text
+
+    report = "📊 **Отчёт по загрузке машин**\n\n"
+    report += generate_report(orders_today, "📅 Сегодня:")
+    report += "\n"
+    report += generate_report(orders_tomorrow, "📅 Завтра:")
+
+    await update.message.reply_text(report, parse_mode="Markdown")
+
+
+# === Экспорт в Excel с выбором даты ===
 async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     today = datetime.now()
@@ -382,12 +413,10 @@ async def export_date_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.edit_message_text(f"На дату {date_str} заказов нет.")
         return
 
-    # Создаём Excel
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Заказы"
 
-    # Стили
     header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
     thin_border = Border(
@@ -397,7 +426,6 @@ async def export_date_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         bottom=Side(style='thin')
     )
 
-    # Заголовки
     headers = ["№", "Номер заказа", "Клиент", "Адрес доставки", "Дата", "Машина", "Статус", "Комментарий"]
     sheet.append(headers)
 
@@ -408,32 +436,20 @@ async def export_date_selected(update: Update, context: ContextTypes.DEFAULT_TYP
         cell.alignment = Alignment(horizontal='center', vertical='center')
         cell.border = thin_border
 
-    # Данные
     for idx, o in enumerate(orders, 1):
         machine_info = f"{o[7]} ({o[8]})" if o[7] else "Не назначена"
         sheet.append([
-            idx,
-            o[1],
-            o[2],
-            o[3],
-            o[4],
-            machine_info,
-            o[5],
-            o[6] or ""
+            idx, o[1], o[2], o[3], o[4], machine_info, o[5], o[6] or ""
         ])
-
-        # Применяем границы
         for col in range(1, 9):
             sheet.cell(row=idx + 1, column=col).border = thin_border
 
-    # Строка Итого
     total_row = len(orders) + 2
     sheet.cell(row=total_row, column=1, value="ИТОГО ЗАКАЗОВ:")
     sheet.cell(row=total_row, column=1).font = Font(bold=True, size=11)
     sheet.cell(row=total_row, column=2, value=len(orders))
     sheet.cell(row=total_row, column=2).font = Font(bold=True, size=11)
 
-    # Автоширина
     for column in sheet.columns:
         max_length = 0
         column_letter = column[0].column_letter
@@ -445,7 +461,6 @@ async def export_date_selected(update: Update, context: ContextTypes.DEFAULT_TYP
                 pass
         sheet.column_dimensions[column_letter].width = min(max_length + 2, 45)
 
-    # Сохраняем в память
     output = BytesIO()
     workbook.save(output)
     output.seek(0)
@@ -503,25 +518,27 @@ def main():
     application.add_handler(CommandHandler("orders", orders))
     application.add_handler(CommandHandler("deleteorder", deleteorder))
     application.add_handler(CommandHandler("changevehicle", changevehicle))
+    application.add_handler(CommandHandler("loadreport", load_report))
     application.add_handler(addcar_conv)
     application.add_handler(addorder_conv)
     application.add_handler(CommandHandler("importcars", importcars))
     application.add_handler(CommandHandler("importorders", importorders))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    # Кнопка экспорта + обработка выбора даты
-    application.add_handler(MessageHandler(filters.Regex("^📤 Экспорт в Excel$"), export_excel))
-    application.add_handler(CallbackQueryHandler(export_date_selected, pattern="^export_"))
-
-    # Обработка кнопок меню
+    # Кнопки меню
     application.add_handler(MessageHandler(filters.Regex("^🚚 Машины$"), cars))
     application.add_handler(MessageHandler(filters.Regex("^📦 Заказы$"), orders))
     application.add_handler(MessageHandler(filters.Regex("^➕ Добавить машину$"), addcar_start))
     application.add_handler(MessageHandler(filters.Regex("^➕ Добавить заказ$"), addorder_start))
     application.add_handler(MessageHandler(filters.Regex("^🗑️ Удалить заказ$"), deleteorder))
     application.add_handler(MessageHandler(filters.Regex("^🔄 Сменить машину$"), changevehicle))
+    application.add_handler(MessageHandler(filters.Regex("^📊 Отчёт по загрузке$"), load_report))
+    application.add_handler(MessageHandler(filters.Regex("^📤 Экспорт в Excel$"), export_excel))
     application.add_handler(MessageHandler(filters.Regex("^📥 Импорт машин$"), importcars))
     application.add_handler(MessageHandler(filters.Regex("^📥 Импорт заказов$"), importorders))
+
+    # Callback для экспорта
+    application.add_handler(CallbackQueryHandler(export_date_selected, pattern="^export_"))
 
     print("[INFO] Бот запущен")
     application.run_polling()
