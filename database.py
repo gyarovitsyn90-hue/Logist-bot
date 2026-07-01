@@ -1,5 +1,4 @@
 import sqlite3
-from datetime import datetime, timedelta
 
 DB_NAME = "logistics.db"
 
@@ -52,46 +51,6 @@ def init_db():
     conn.close()
 
 
-def get_client_stats(client_name, start_date, end_date):
-    """Возвращает статистику по клиенту за период"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT 
-            COUNT(*) as total_orders,
-            COALESCE(SUM(pallets), 0) as total_pallets,
-            COALESCE(SUM(volume_m3), 0) as total_volume
-        FROM orders 
-        WHERE client LIKE ? 
-          AND delivery_date BETWEEN ? AND ?
-    """, (f"%{client_name}%", start_date, end_date))
-    
-    result = cursor.fetchone()
-    conn.close()
-    return result
-
-
-def get_client_orders(client_name, start_date, end_date):
-    """Возвращает список заказов клиента за период (для Excel)"""
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT o.order_number, o.client, o.address, o.delivery_date,
-               o.status, o.comment, o.pallets, o.volume_m3,
-               v.number, v.model
-        FROM orders o
-        LEFT JOIN vehicles v ON o.vehicle_id = v.id
-        WHERE o.client LIKE ? 
-          AND o.delivery_date BETWEEN ? AND ?
-        ORDER BY o.delivery_date
-    """, (f"%{client_name}%", start_date, end_date))
-    
-    orders = cursor.fetchall()
-    conn.close()
-    return orders
-
-
-# Остальные функции (add_vehicle, get_all_vehicles, get_orders_by_date и т.д.) оставляем без изменений
 def add_vehicle(number, model=None, volume_m3=0, pallets=0, max_weight_kg=0,
                 body_type=None, can_oversized=0, route_restrictions=None):
     conn = sqlite3.connect(DB_NAME)
@@ -110,49 +69,25 @@ def add_vehicle(number, model=None, volume_m3=0, pallets=0, max_weight_kg=0,
         conn.close()
 
 
-def get_all_vehicles():
+def bulk_add_vehicles(vehicles_list):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, number, model, volume_m3, pallets FROM vehicles ORDER BY id")
-    vehicles = cursor.fetchall()
-    conn.close()
-    return vehicles
+    added, skipped = 0, 0
 
+    for v in vehicles_list:
+        try:
+            cursor.execute("""
+                INSERT INTO vehicles 
+                (number, model, volume_m3, pallets, max_weight_kg, body_type, can_oversized, route_restrictions)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, v)
+            added += 1
+        except sqlite3.IntegrityError:
+            skipped += 1
 
-def get_orders_by_date(target_date):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT o.id, o.order_number, o.client, o.address, o.delivery_date,
-               o.status, o.comment, v.number, v.model, o.pallets, o.volume_m3
-        FROM orders o
-        LEFT JOIN vehicles v ON o.vehicle_id = v.id
-        WHERE o.delivery_date = ?
-        ORDER BY o.id
-    """, (target_date,))
-    orders = cursor.fetchall()
-    conn.close()
-    return orders
-
-
-def delete_order(order_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM orders WHERE id = ?", (order_id,))
     conn.commit()
-    deleted = cursor.rowcount
     conn.close()
-    return deleted > 0
-
-
-def update_order_vehicle(order_id, new_vehicle_id):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("UPDATE orders SET vehicle_id = ? WHERE id = ?", (new_vehicle_id, order_id))
-    conn.commit()
-    updated = cursor.rowcount
-    conn.close()
-    return updated > 0
+    return added, skipped
 
 
 def bulk_add_orders_safe(orders_list):
@@ -183,7 +118,7 @@ def bulk_add_orders_safe(orders_list):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'В работе')
             """, (order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_id))
             added += 1
-        except Exception as e:
+        except Exception:
             skipped += 1
             skipped_reasons.append(f"{order_number} — ошибка")
 
@@ -224,3 +159,83 @@ def can_vehicle_accept_order(vehicle_id, new_pallets, new_volume):
         return False, f"Недостаточно объёма"
 
     return True, "OK"
+
+
+def get_all_vehicles():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, number, model, volume_m3, pallets FROM vehicles ORDER BY id")
+    vehicles = cursor.fetchall()
+    conn.close()
+    return vehicles
+
+
+def get_orders_by_date(target_date):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT o.id, o.order_number, o.client, o.address, o.delivery_date,
+               o.status, o.comment, v.number, v.model, o.pallets, o.volume_m3
+        FROM orders o
+        LEFT JOIN vehicles v ON o.vehicle_id = v.id
+        WHERE o.delivery_date = ?
+        ORDER BY o.id
+    """, (target_date,))
+    orders = cursor.fetchall()
+    conn.close()
+    return orders
+
+
+def get_client_stats(client_name, start_date, end_date):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT 
+            COUNT(*) as total_orders,
+            COALESCE(SUM(pallets), 0) as total_pallets,
+            COALESCE(SUM(volume_m3), 0) as total_volume
+        FROM orders 
+        WHERE client LIKE ? 
+          AND delivery_date BETWEEN ? AND ?
+    """, (f"%{client_name}%", start_date, end_date))
+    result = cursor.fetchone()
+    conn.close()
+    return result
+
+
+def get_client_orders(client_name, start_date, end_date):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT o.order_number, o.client, o.address, o.delivery_date,
+               o.status, o.comment, o.pallets, o.volume_m3,
+               v.number, v.model
+        FROM orders o
+        LEFT JOIN vehicles v ON o.vehicle_id = v.id
+        WHERE o.client LIKE ? 
+          AND o.delivery_date BETWEEN ? AND ?
+        ORDER BY o.delivery_date
+    """, (f"%{client_name}%", start_date, end_date))
+    orders = cursor.fetchall()
+    conn.close()
+    return orders
+
+
+def delete_order(order_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+    conn.commit()
+    deleted = cursor.rowcount
+    conn.close()
+    return deleted > 0
+
+
+def update_order_vehicle(order_id, new_vehicle_id):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE orders SET vehicle_id = ? WHERE id = ?", (new_vehicle_id, order_id))
+    conn.commit()
+    updated = cursor.rowcount
+    conn.close()
+    return updated > 0
