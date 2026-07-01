@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timedelta
 
 DB_NAME = "logistics.db"
 
@@ -51,86 +52,43 @@ def init_db():
     conn.close()
 
 
-def get_vehicle_by_number(vehicle_number):
+def get_client_stats(client_name, start_date, end_date):
+    """Возвращает статистику по клиенту за период"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, pallets, volume_m3 FROM vehicles WHERE number = ?", (vehicle_number,))
-    vehicle = cursor.fetchone()
-    conn.close()
-    return vehicle
-
-
-def can_vehicle_accept_order(vehicle_id, new_pallets, new_volume):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT pallets, volume_m3 FROM vehicles WHERE id = ?", (vehicle_id,))
-    vehicle = cursor.fetchone()
-
-    if not vehicle:
-        return False, "Машина не найдена"
-
-    max_pallets, max_volume = vehicle
     cursor.execute("""
-        SELECT COALESCE(SUM(pallets), 0), COALESCE(SUM(volume_m3), 0)
-        FROM orders WHERE vehicle_id = ?
-    """, (vehicle_id,))
-    current = cursor.fetchone()
+        SELECT 
+            COUNT(*) as total_orders,
+            COALESCE(SUM(pallets), 0) as total_pallets,
+            COALESCE(SUM(volume_m3), 0) as total_volume
+        FROM orders 
+        WHERE client LIKE ? 
+          AND delivery_date BETWEEN ? AND ?
+    """, (f"%{client_name}%", start_date, end_date))
+    
+    result = cursor.fetchone()
     conn.close()
-
-    current_pallets, current_volume = current
-
-    if current_pallets + new_pallets > max_pallets:
-        return False, f"Недостаточно паллет (занято {current_pallets}/{max_pallets})"
-
-    if current_volume + new_volume > max_volume:
-        return False, f"Недостаточно объёма (занято {current_volume:.1f}/{max_volume} м³)"
-
-    return True, "OK"
+    return result
 
 
-def bulk_add_orders_safe(orders_list):
-    """
-    orders_list = [
-        (order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_number),
-        ...
-    ]
-    """
+def get_client_orders(client_name, start_date, end_date):
+    """Возвращает список заказов клиента за период (для Excel)"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    added, skipped = 0, 0
-    skipped_reasons = []
-
-    for order in orders_list:
-        order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_number = order
-
-        vehicle = get_vehicle_by_number(vehicle_number)
-        if not vehicle:
-            skipped += 1
-            skipped_reasons.append(f"{order_number} — машина {vehicle_number} не найдена")
-            continue
-
-        vehicle_id, max_pallets, max_volume = vehicle
-
-        can_accept, reason = can_vehicle_accept_order(vehicle_id, pallets, volume_m3)
-        if not can_accept:
-            skipped += 1
-            skipped_reasons.append(f"{order_number} — {reason}")
-            continue
-
-        try:
-            cursor.execute("""
-                INSERT INTO orders 
-                (order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_id, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'В работе')
-            """, (order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_id))
-            added += 1
-        except Exception as e:
-            skipped += 1
-            skipped_reasons.append(f"{order_number} — ошибка: {str(e)}")
-
-    conn.commit()
+    cursor.execute("""
+        SELECT o.order_number, o.client, o.address, o.delivery_date,
+               o.status, o.comment, o.pallets, o.volume_m3,
+               v.number, v.model
+        FROM orders o
+        LEFT JOIN vehicles v ON o.vehicle_id = v.id
+        WHERE o.client LIKE ? 
+          AND o.delivery_date BETWEEN ? AND ?
+        ORDER BY o.delivery_date
+    """, (f"%{client_name}%", start_date, end_date))
+    
+    orders = cursor.fetchall()
     conn.close()
-    return added, skipped, skipped_reasons
+    return orders
 
 
 # Остальные функции (add_vehicle, get_all_vehicles, get_orders_by_date и т.д.) оставляем без изменений
@@ -195,3 +153,74 @@ def update_order_vehicle(order_id, new_vehicle_id):
     updated = cursor.rowcount
     conn.close()
     return updated > 0
+
+
+def bulk_add_orders_safe(orders_list):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    added, skipped = 0, 0
+    skipped_reasons = []
+
+    for order in orders_list:
+        order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_number = order
+        vehicle = get_vehicle_by_number(vehicle_number)
+        if not vehicle:
+            skipped += 1
+            skipped_reasons.append(f"{order_number} — машина {vehicle_number} не найдена")
+            continue
+
+        vehicle_id = vehicle[0]
+        can_accept, reason = can_vehicle_accept_order(vehicle_id, pallets, volume_m3)
+        if not can_accept:
+            skipped += 1
+            skipped_reasons.append(f"{order_number} — {reason}")
+            continue
+
+        try:
+            cursor.execute("""
+                INSERT INTO orders 
+                (order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_id, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'В работе')
+            """, (order_number, client, address, delivery_date, comment, pallets, volume_m3, vehicle_id))
+            added += 1
+        except Exception as e:
+            skipped += 1
+            skipped_reasons.append(f"{order_number} — ошибка")
+
+    conn.commit()
+    conn.close()
+    return added, skipped, skipped_reasons
+
+
+def get_vehicle_by_number(vehicle_number):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, pallets, volume_m3 FROM vehicles WHERE number = ?", (vehicle_number,))
+    vehicle = cursor.fetchone()
+    conn.close()
+    return vehicle
+
+
+def can_vehicle_accept_order(vehicle_id, new_pallets, new_volume):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT pallets, volume_m3 FROM vehicles WHERE id = ?", (vehicle_id,))
+    vehicle = cursor.fetchone()
+    if not vehicle:
+        return False, "Машина не найдена"
+
+    max_pallets, max_volume = vehicle
+    cursor.execute("""
+        SELECT COALESCE(SUM(pallets), 0), COALESCE(SUM(volume_m3), 0)
+        FROM orders WHERE vehicle_id = ?
+    """, (vehicle_id,))
+    current = cursor.fetchone()
+    conn.close()
+
+    current_pallets, current_volume = current
+    if current_pallets + new_pallets > max_pallets:
+        return False, f"Недостаточно паллет (занято {current_pallets}/{max_pallets})"
+    if current_volume + new_volume > max_volume:
+        return False, f"Недостаточно объёма"
+
+    return True, "OK"
