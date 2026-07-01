@@ -91,7 +91,6 @@ def bulk_add_vehicles(vehicles_list):
 
 
 def replace_all_vehicles(new_vehicles_list):
-    """Полностью очищает таблицу машин и вставляет новые"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM vehicles")
