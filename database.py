@@ -31,10 +31,22 @@ def init_db():
             vehicle_id INTEGER,
             status TEXT DEFAULT 'В работе',
             comment TEXT,
+            pallets INTEGER DEFAULT 0,
+            volume_m3 REAL DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (vehicle_id) REFERENCES vehicles(id)
         )
     """)
+
+    # Добавляем новые колонки, если их ещё нет (для уже существующих баз)
+    try:
+        cursor.execute("ALTER TABLE orders ADD COLUMN pallets INTEGER DEFAULT 0")
+    except:
+        pass
+    try:
+        cursor.execute("ALTER TABLE orders ADD COLUMN volume_m3 REAL DEFAULT 0")
+    except:
+        pass
 
     conn.commit()
     conn.close()
@@ -79,27 +91,6 @@ def bulk_add_vehicles(vehicles_list):
     return added, skipped
 
 
-def bulk_add_orders(orders_list):
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    added, skipped = 0, 0
-
-    for order in orders_list:
-        try:
-            cursor.execute("""
-                INSERT INTO orders 
-                (order_number, client, address, delivery_date, comment, status)
-                VALUES (?, ?, ?, ?, ?, 'В работе')
-            """, order)
-            added += 1
-        except Exception:
-            skipped += 1
-
-    conn.commit()
-    conn.close()
-    return added, skipped
-
-
 def replace_all_vehicles(new_vehicles_list):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -120,6 +111,28 @@ def replace_all_vehicles(new_vehicles_list):
     return added
 
 
+def bulk_add_orders(orders_list):
+    """orders_list = [(order_number, client, address, delivery_date, comment, pallets, volume_m3), ...]"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    added, skipped = 0, 0
+
+    for order in orders_list:
+        try:
+            cursor.execute("""
+                INSERT INTO orders 
+                (order_number, client, address, delivery_date, comment, pallets, volume_m3, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'В работе')
+            """, order)
+            added += 1
+        except Exception:
+            skipped += 1
+
+    conn.commit()
+    conn.close()
+    return added, skipped
+
+
 def get_all_vehicles():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -137,7 +150,7 @@ def get_orders_by_date(target_date):
     cursor = conn.cursor()
     cursor.execute("""
         SELECT o.id, o.order_number, o.client, o.address, o.delivery_date,
-               o.status, o.comment, v.number, v.model
+               o.status, o.comment, v.number, v.model, o.pallets, o.volume_m3
         FROM orders o
         LEFT JOIN vehicles v ON o.vehicle_id = v.id
         WHERE o.delivery_date = ?
@@ -146,6 +159,45 @@ def get_orders_by_date(target_date):
     orders = cursor.fetchall()
     conn.close()
     return orders
+
+
+def get_vehicle_current_load(vehicle_id):
+    """Возвращает (total_pallets, total_volume) уже загруженных заказов"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COALESCE(SUM(pallets), 0), COALESCE(SUM(volume_m3), 0)
+        FROM orders 
+        WHERE vehicle_id = ?
+    """, (vehicle_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0], result[1]
+
+
+def can_vehicle_accept_order(vehicle_id, new_pallets, new_volume):
+    """Проверяет, может ли машина принять заказ"""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT pallets, volume_m3 FROM vehicles WHERE id = ?
+    """, (vehicle_id,))
+    vehicle = cursor.fetchone()
+    conn.close()
+
+    if not vehicle:
+        return False, "Машина не найдена"
+
+    max_pallets, max_volume = vehicle
+    current_pallets, current_volume = get_vehicle_current_load(vehicle_id)
+
+    if current_pallets + new_pallets > max_pallets:
+        return False, f"Недостаточно паллет (занято {current_pallets}/{max_pallets})"
+
+    if current_volume + new_volume > max_volume:
+        return False, f"Недостаточно объёма (занято {current_volume:.1f}/{max_volume} м³)"
+
+    return True, "OK"
 
 
 def delete_order(order_id):
