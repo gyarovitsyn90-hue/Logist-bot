@@ -14,15 +14,14 @@ import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 import pandas as pd
 
-from database import init_db, replace_all_vehicles, get_all_vehicles
+from database import init_db, replace_all_vehicles, get_active_vehicles
 
 # ==================== МЕНЮ ====================
 
 def get_main_menu():
     keyboard = [
         [KeyboardButton("🚚 Машины"), KeyboardButton("📦 Заказы")],
-        [KeyboardButton("📊 Сформировать план на завтра")],
-        [KeyboardButton("📋 Посмотреть заказы")]
+        [KeyboardButton("📊 Сформировать план на завтра")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -57,31 +56,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def show_machines_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Управление машинами:",
-        reply_markup=get_machines_menu()
-    )
+    await update.message.reply_text("Управление машинами:", reply_markup=get_machines_menu())
 
 
 async def show_orders_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Управление заказами:",
-        reply_markup=get_orders_menu()
-    )
+    await update.message.reply_text("Управление заказами:", reply_markup=get_orders_menu())
 
 
-# ==================== CALLBACK ОБРАБОТЧИКИ МЕНЮ ====================
+# ==================== CALLBACK МЕНЮ ====================
 
 async def machines_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     if query.data == "machine_add":
-        await query.edit_message_text("Функция добавления машины будет добавлена в следующей версии.")
+        await query.edit_message_text("Функция добавления машины будет добавлена позже.")
     elif query.data == "machine_edit":
-        await query.edit_message_text("Функция редактирования машины будет добавлена в следующей версии.")
+        await query.edit_message_text("Функция редактирования будет добавлена позже.")
     elif query.data == "machine_delete":
-        await query.edit_message_text("Функция удаления машины будет добавлена в следующей версии.")
+        await query.edit_message_text("Функция удаления будет добавлена позже.")
     elif query.data == "machine_import":
         await query.edit_message_text(
             "Пришлите Excel-файл с машинами.\n\n"
@@ -95,14 +88,14 @@ async def orders_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
 
     if query.data == "order_add":
-        await query.edit_message_text("Функция добавления заказа будет добавлена в следующей версии.")
+        await query.edit_message_text("Функция добавления заказа будет добавлена позже.")
     elif query.data == "order_import":
         await query.edit_message_text("Пришлите Excel-файл с заказами.")
         context.user_data["awaiting_order_import"] = True
     elif query.data == "auto_plan":
-        await query.edit_message_text("Функция автоматического формирования плана будет добавлена в следующей версии.")
+        await query.edit_message_text("Функция автоматического плана в активной разработке.")
     elif query.data == "view_orders":
-        await query.edit_message_text("Функция просмотра заказов будет добавлена в следующей версии.")
+        await query.edit_message_text("Функция просмотра заказов будет добавлена позже.")
 
 
 # ==================== ИМПОРТ ====================
@@ -152,33 +145,30 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting_machine_import"] = False
         return
 
-    # Импорт заказов (заглушка)
+    # Импорт заказов
     if context.user_data.get("awaiting_order_import"):
-        await update.message.reply_text("Импорт заказов будет доработан в следующей версии.")
+        await update.message.reply_text("Импорт заказов принят. Полная обработка будет добавлена в следующей версии.")
         context.user_data["awaiting_order_import"] = False
         return
 
 
-# ==================== ОСНОВНОЙ ЗАПУСК ====================
+# ==================== ЗАПУСК ====================
 
 def main():
     init_db()
 
     application = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
 
-    # Главное меню
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.Regex("^🚚 Машины$"), show_machines_menu))
     application.add_handler(MessageHandler(filters.Regex("^📦 Заказы$"), show_orders_menu))
 
-    # Inline меню
     application.add_handler(CallbackQueryHandler(machines_menu_handler, pattern="^machine_"))
     application.add_handler(CallbackQueryHandler(orders_menu_handler, pattern="^order_|^auto_plan|^view_orders"))
 
-    # Импорт файлов
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    print("[INFO] Новый бот запущен")
+    print("[INFO] Бот запущен (новая версия)")
     application.run_polling()
 
 
