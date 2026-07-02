@@ -349,13 +349,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file = await context.bot.get_file(document.file_id)
     file_bytes = await file.download_as_bytearray()
 
-    # Выбираем engine в зависимости от формата файла
     engine = "openpyxl" if document.file_name.endswith(".xlsx") else "xlrd"
 
-    # ====================== ИМПОРТ МАШИН ======================
+    # ====================== ИМПОРТ МАШИН (гибкий) ======================
     if context.user_data.get("awaiting_file_replace"):
         try:
             df = pd.read_excel(BytesIO(file_bytes), engine=engine)
+            df.columns = [str(col).lower().strip() for col in df.columns]
         except Exception as e:
             await update.message.reply_text(f"Не удалось прочитать файл: {str(e)}")
             context.user_data["awaiting_file_replace"] = False
@@ -366,18 +366,35 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for _, row in df.iterrows():
             try:
-                number = str(row.iloc[0]).strip()
+                number = None
+                for col in df.columns:
+                    if any(x in col for x in ["номер", "гос", "тс", "машин"]):
+                        number = str(row[col]).strip() if pd.notna(row[col]) else None
+                        break
+
                 if not number:
                     skipped += 1
                     continue
 
-                model = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else None
-                volume = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0
-                pallets = int(row.iloc[3]) if pd.notna(row.iloc[3]) else 0
-                weight = int(row.iloc[4]) if pd.notna(row.iloc[4]) else 0
-                body_type = str(row.iloc[5]).strip() if pd.notna(row.iloc[5]) else None
-                oversized = 1 if pd.notna(row.iloc[6]) and str(row.iloc[6]).lower() in ["1", "да", "true", "yes"] else 0
-                restrictions = str(row.iloc[7]).strip() if pd.notna(row.iloc[7]) else None
+                model = volume = pallets = weight = 0
+                body_type = restrictions = None
+                oversized = 0
+
+                for col in df.columns:
+                    if any(x in col for x in ["модель", "марк"]):
+                        model = str(row[col]).strip() if pd.notna(row[col]) else None
+                    if any(x in col for x in ["объем", "м3", "куб"]):
+                        volume = float(row[col]) if pd.notna(row[col]) else 0
+                    if any(x in col for x in ["паллет", "мест"]):
+                        pallets = int(row[col]) if pd.notna(row[col]) else 0
+                    if any(x in col for x in ["вес", "грузопод"]):
+                        weight = int(row[col]) if pd.notna(row[col]) else 0
+                    if any(x in col for x in ["тип", "кузов"]):
+                        body_type = str(row[col]).strip() if pd.notna(row[col]) else None
+                    if any(x in col for x in ["негабарит", "oversize"]):
+                        oversized = 1 if str(row[col]).lower() in ["1", "да", "true", "yes"] else 0
+                    if any(x in col for x in ["огранич", "маршрут"]):
+                        restrictions = str(row[col]).strip() if pd.notna(row[col]) else None
 
                 vehicles.append((number, model, volume, pallets, weight, body_type, oversized, restrictions))
             except Exception:
@@ -395,10 +412,11 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["awaiting_file_replace"] = False
         return
 
-    # ====================== ИМПОРТ ЗАКАЗОВ ======================
+    # ====================== ИМПОРТ ЗАКАЗОВ (гибкий) ======================
     if context.user_data.get("awaiting_order_file"):
         try:
             df = pd.read_excel(BytesIO(file_bytes), engine=engine)
+            df.columns = [str(col).lower().strip() for col in df.columns]
         except Exception as e:
             await update.message.reply_text(f"Не удалось прочитать файл: {str(e)}")
             context.user_data["awaiting_order_file"] = False
@@ -409,19 +427,35 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for _, row in df.iterrows():
             try:
-                order_number = str(row.iloc[0]).strip()
-                vehicle_number = str(row.iloc[7]).strip() if pd.notna(row.iloc[7]) else ""
+                order_number = vehicle_number = None
+
+                for col in df.columns:
+                    if any(x in col for x in ["номер", "заказ", "№"]):
+                        order_number = str(row[col]).strip() if pd.notna(row[col]) else None
+                    if any(x in col for x in ["машин", "транспорт", "vehicle", "авто"]):
+                        vehicle_number = str(row[col]).strip() if pd.notna(row[col]) else ""
 
                 if not order_number or not vehicle_number:
                     skipped += 1
                     continue
 
-                client = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
-                address = str(row.iloc[2]).strip() if pd.notna(row.iloc[2]) else ""
-                delivery_date = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ""
-                comment = str(row.iloc[4]).strip() if pd.notna(row.iloc[4]) else None
-                pallets = int(row.iloc[5]) if pd.notna(row.iloc[5]) else 0
-                volume = float(row.iloc[6]) if pd.notna(row.iloc[6]) else 0
+                client = address = delivery_date = comment = ""
+                pallets = 0
+                volume = 0.0
+
+                for col in df.columns:
+                    if any(x in col for x in ["клиент", "получатель", "контрагент"]):
+                        client = str(row[col]).strip() if pd.notna(row[col]) else ""
+                    if any(x in col for x in ["адрес", "доставк"]):
+                        address = str(row[col]).strip() if pd.notna(row[col]) else ""
+                    if any(x in col for x in ["дата"]):
+                        delivery_date = str(row[col]).strip() if pd.notna(row[col]) else ""
+                    if any(x in col for x in ["коммент", "примеч"]):
+                        comment = str(row[col]).strip() if pd.notna(row[col]) else ""
+                    if any(x in col for x in ["паллет", "мест"]):
+                        pallets = int(row[col]) if pd.notna(row[col]) else 0
+                    if any(x in col for x in ["объем", "м3"]):
+                        volume = float(row[col]) if pd.notna(row[col]) else 0.0
 
                 orders.append((
                     order_number, client, address, delivery_date,
