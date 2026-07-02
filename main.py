@@ -51,6 +51,14 @@ def get_orders_menu():
     return InlineKeyboardMarkup(keyboard)
 
 
+def get_warehouse_menu():
+    keyboard = [
+        [InlineKeyboardButton("📍 Показать текущие точки", callback_data="warehouse_show")],
+        [InlineKeyboardButton("✏️ Изменить конечную точку", callback_data="warehouse_change_end")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
 # ==================== ОСНОВНЫЕ КОМАНДЫ ====================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -68,31 +76,11 @@ async def show_orders_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Управление заказами:", reply_markup=get_orders_menu())
 
 
-# Показать информацию о складе
 async def show_warehouse(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    end_point = get_setting("depot_end", DEPOT_START)
-    text = (
-        f"**Начальная точка (склад):**\n{DEPOT_START}\n\n"
-        f"**Конечная точка:**\n{end_point}\n\n"
-        "Чтобы изменить конечную точку, используй команду:\n"
-        "`/setend Адрес`"
+    await update.message.reply_text(
+        "Управление складом:",
+        reply_markup=get_warehouse_menu()
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
-
-
-# Изменить конечную точку
-async def set_depot_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text(
-            "Использование: `/setend Адрес конечной точки`\n\n"
-            "Например:\n`/setend Россия, Московская область, г. Дмитров, ул. ...`"
-        )
-        return
-
-    new_end = " ".join(context.args)
-    set_setting("depot_end", new_end)
-
-    await update.message.reply_text(f"Конечная точка изменена на:\n\n{new_end}")
 
 
 # ==================== CALLBACK МЕНЮ ====================
@@ -125,6 +113,39 @@ async def orders_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text("Функция автоматического плана в активной разработке.")
     elif query.data == "view_orders":
         await query.edit_message_text("Функция просмотра заказов в разработке.")
+
+
+async def warehouse_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "warehouse_show":
+        end_point = get_setting("depot_end", DEPOT_START)
+        text = (
+            f"**Начальная точка (склад):**\n{DEPOT_START}\n\n"
+            f"**Конечная точка:**\n{end_point}"
+        )
+        await query.edit_message_text(text, parse_mode="Markdown")
+
+    elif query.data == "warehouse_change_end":
+        await query.edit_message_text(
+            "Пришлите новый адрес конечной точки.\n\n"
+            "Например:\n`Россия, Московская область, г. Дмитров, ...`"
+        )
+        context.user_data["awaiting_new_end_point"] = True
+
+
+# ==================== ИЗМЕНЕНИЕ КОНЕЧНОЙ ТОЧКИ ====================
+
+async def handle_text_for_end_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("awaiting_new_end_point"):
+        new_end = update.message.text
+        set_setting("depot_end", new_end)
+        context.user_data["awaiting_new_end_point"] = False
+
+        await update.message.reply_text(
+            f"Конечная точка успешно изменена на:\n\n{new_end}"
+        )
 
 
 # ==================== ИМПОРТ ====================
@@ -186,7 +207,6 @@ def main():
     application = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("setend", set_depot_end))
 
     application.add_handler(MessageHandler(filters.Regex("^🚚 Машины$"), show_machines_menu))
     application.add_handler(MessageHandler(filters.Regex("^📦 Заказы$"), show_orders_menu))
@@ -194,10 +214,12 @@ def main():
 
     application.add_handler(CallbackQueryHandler(machines_menu_handler, pattern="^machine_"))
     application.add_handler(CallbackQueryHandler(orders_menu_handler, pattern="^order_|^auto_plan|^view_orders"))
+    application.add_handler(CallbackQueryHandler(warehouse_callback_handler, pattern="^warehouse_"))
 
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text_for_end_point))
 
-    print("[INFO] Бот запущен")
+    print("[INFO] Бот запущен (обновлённая версия)")
     application.run_polling()
 
 
