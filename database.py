@@ -6,6 +6,7 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
+    # Таблица машин
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vehicles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,11 +20,54 @@ def init_db():
             allowed_routes TEXT,
             forbidden_routes TEXT,
             restrictions TEXT,
-            is_active INTEGER DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            is_active INTEGER DEFAULT 1
         )
     """)
 
+    # Таблица заказов
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_number TEXT,
+            client TEXT,
+            address TEXT,
+            delivery_date TEXT,
+            vehicle_id INTEGER,
+            status TEXT DEFAULT 'Не распределён',
+            comment TEXT,
+            pallets INTEGER DEFAULT 0,
+            volume_m3 REAL DEFAULT 0
+        )
+    """)
+
+    # Таблица настроек (для конечной точки)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def get_setting(key, default=None):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else default
+
+
+def set_setting(key, value):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO settings (key, value) 
+        VALUES (?, ?)
+    """, (key, value))
     conn.commit()
     conn.close()
 
@@ -43,8 +87,8 @@ def replace_all_vehicles(vehicles_list):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, v)
             added += 1
-        except Exception as e:
-            print(f"Ошибка добавления машины: {e}")
+        except:
+            pass
 
     conn.commit()
     conn.close()
@@ -55,15 +99,6 @@ def get_active_vehicles():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM vehicles WHERE is_active = 1")
-    vehicles = cursor.fetchall()
-    conn.close()
-    return vehicles
-
-
-def get_all_vehicles():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM vehicles ORDER BY id")
     vehicles = cursor.fetchall()
     conn.close()
     return vehicles
