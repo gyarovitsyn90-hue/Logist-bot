@@ -25,7 +25,8 @@ DEPOT_START = "Россия, Московская область, Дмитров
 def get_main_menu():
     keyboard = [
         [KeyboardButton("🚚 Машины"), KeyboardButton("📦 Заказы")],
-        [KeyboardButton("📊 Сформировать план на завтра")]
+        [KeyboardButton("📊 Сформировать план на завтра")],
+        [KeyboardButton("🏭 Склад")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
@@ -67,14 +68,14 @@ async def show_orders_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Управление заказами:", reply_markup=get_orders_menu())
 
 
-# Показать текущие депо-точки
-async def show_depot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Показать информацию о складе
+async def show_warehouse(update: Update, context: ContextTypes.DEFAULT_TYPE):
     end_point = get_setting("depot_end", DEPOT_START)
     text = (
         f"**Начальная точка (склад):**\n{DEPOT_START}\n\n"
         f"**Конечная точка:**\n{end_point}\n\n"
         "Чтобы изменить конечную точку, используй команду:\n"
-        "`/setend Адрес новой конечной точки`"
+        "`/setend Адрес`"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -84,17 +85,14 @@ async def set_depot_end(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text(
             "Использование: `/setend Адрес конечной точки`\n\n"
-            "Например:\n"
-            "`/setend Россия, Московская область, Дмитровский район, деревня Глазово, стр. 10`"
+            "Например:\n`/setend Россия, Московская область, г. Дмитров, ул. ...`"
         )
         return
 
     new_end = " ".join(context.args)
     set_setting("depot_end", new_end)
 
-    await update.message.reply_text(
-        f"Конечная точка успешно изменена на:\n\n{new_end}"
-    )
+    await update.message.reply_text(f"Конечная точка изменена на:\n\n{new_end}")
 
 
 # ==================== CALLBACK МЕНЮ ====================
@@ -188,11 +186,11 @@ def main():
     application = ApplicationBuilder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("depot", show_depot))
     application.add_handler(CommandHandler("setend", set_depot_end))
 
     application.add_handler(MessageHandler(filters.Regex("^🚚 Машины$"), show_machines_menu))
     application.add_handler(MessageHandler(filters.Regex("^📦 Заказы$"), show_orders_menu))
+    application.add_handler(MessageHandler(filters.Regex("^🏭 Склад$"), show_warehouse))
 
     application.add_handler(CallbackQueryHandler(machines_menu_handler, pattern="^machine_"))
     application.add_handler(CallbackQueryHandler(orders_menu_handler, pattern="^order_|^auto_plan|^view_orders"))
