@@ -407,7 +407,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         skipped = 0
 
         for row in sheet.iter_rows(min_row=2, values_only=True):
-            if not row or not row[0] or not row[7]:
+            # Защита от строк с недостаточным количеством колонок
+            if not row or len(row) < 8 or not row[0] or not row[7]:
                 skipped += 1
                 continue
 
