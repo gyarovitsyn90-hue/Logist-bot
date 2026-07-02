@@ -606,6 +606,8 @@ def main():
             RESTRICTIONS: [MessageHandler(filters.TEXT & ~filters.COMMAND, addcar_finish)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True
     )
 
     addorder_conv = ConversationHandler(
@@ -620,6 +622,8 @@ def main():
             ORDER_COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, addorder_comment)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
+        per_chat=True
     )
 
     client_history_conv = ConversationHandler(
