@@ -339,6 +339,7 @@ async def importorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # ====================== ИМПОРТ МАШИН ======================
     if context.user_data.get("awaiting_file_replace"):
         document = update.message.document
         if not document.file_name.endswith((".xlsx", ".xls")):
@@ -351,22 +352,46 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet = workbook.active
 
         vehicles = []
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            if row[0]:
-                vehicles.append((
-                    row[0], row[1], row[2] or 0, row[3] or 0,
-                    row[4] or 0, row[7],
-                    1 if "Негабарит: Да" in str(row[7]) else 0,
-                    row[5]
-                ))
+        skipped = 0
 
-        added = replace_all_vehicles(vehicles)
-        await update.message.reply_text(
-            f"База машин полностью обновлена!\nДобавлено: {added} машин"
-        )
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0]:
+                continue
+
+            try:
+                number = str(row[0]).strip()
+                if not number:
+                    skipped += 1
+                    continue
+
+                model = row[1] if len(row) > 1 else None
+                volume = float(row[2]) if len(row) > 2 and row[2] else 0
+                pallets = int(row[3]) if len(row) > 3 and row[3] else 0
+                weight = int(row[4]) if len(row) > 4 and row[4] else 0
+                body_type = row[5] if len(row) > 5 else None
+                oversized = 1 if len(row) > 6 and str(row[6]).lower() in ["1", "да", "true", "yes"] else 0
+                restrictions = row[7] if len(row) > 7 else None
+
+                vehicles.append((
+                    number, model, volume, pallets, weight,
+                    body_type, oversized, restrictions
+                ))
+            except Exception:
+                skipped += 1
+
+        if vehicles:
+            added = replace_all_vehicles(vehicles)
+            text = f"Импорт машин завершён!\nДобавлено: {added}"
+            if skipped > 0:
+                text += f"\nПропущено строк: {skipped}"
+            await update.message.reply_text(text)
+        else:
+            await update.message.reply_text("Не удалось найти подходящие данные для импорта машин.")
+
         context.user_data["awaiting_file_replace"] = False
         return
 
+    # ====================== ИМПОРТ ЗАКАЗОВ ======================
     if context.user_data.get("awaiting_order_file"):
         document = update.message.document
         if not document.file_name.endswith((".xlsx", ".xls")):
@@ -379,18 +404,39 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet = workbook.active
 
         orders = []
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            if row[0] and row[7]:
-                orders.append((
-                    row[0], row[1], row[2], row[3], row[4],
-                    row[5] or 0, row[6] or 0, row[7]
-                ))
+        skipped = 0
 
-        added, skipped, reasons = bulk_add_orders_safe(orders)
-        text = f"Импорт завершён!\nДобавлено: {added} | Пропущено: {skipped}"
-        if reasons:
-            text += "\n\nПричины пропуска:\n" + "\n".join(reasons[:8])
-        await update.message.reply_text(text)
+        for row in sheet.iter_rows(min_row=2, values_only=True):
+            if not row or not row[0] or not row[7]:
+                skipped += 1
+                continue
+
+            try:
+                order_number = str(row[0]).strip()
+                client = row[1] if len(row) > 1 else ""
+                address = row[2] if len(row) > 2 else ""
+                delivery_date = str(row[3]).strip() if len(row) > 3 and row[3] else ""
+                comment = row[4] if len(row) > 4 else None
+                pallets = int(row[5]) if len(row) > 5 and row[5] else 0
+                volume = float(row[6]) if len(row) > 6 and row[6] else 0
+                vehicle_number = str(row[7]).strip()
+
+                orders.append((
+                    order_number, client, address, delivery_date,
+                    comment, pallets, volume, vehicle_number
+                ))
+            except Exception:
+                skipped += 1
+
+        if orders:
+            added, skipped_db, reasons = bulk_add_orders_safe(orders)
+            text = f"Импорт заказов завершён!\nДобавлено: {added} | Пропущено: {skipped + skipped_db}"
+            if reasons:
+                text += "\n\nПричины пропуска:\n" + "\n".join(reasons[:8])
+            await update.message.reply_text(text)
+        else:
+            await update.message.reply_text("Не удалось найти подходящие строки для импорта заказов.")
+
         context.user_data["awaiting_order_file"] = False
         return
 
