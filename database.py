@@ -6,7 +6,6 @@ def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
-    # Таблица машин
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS vehicles (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -25,39 +24,11 @@ def init_db():
         )
     """)
 
-    # Таблица заказов
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            order_number TEXT,
-            client TEXT,
-            address TEXT,
-            delivery_date TEXT,
-            vehicle_id INTEGER,
-            status TEXT DEFAULT 'Не распределён',
-            comment TEXT,
-            pallets INTEGER DEFAULT 0,
-            volume_m3 REAL DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (vehicle_id) REFERENCES vehicles (id)
-        )
-    """)
-
     conn.commit()
     conn.close()
 
 
-def get_all_vehicles():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM vehicles WHERE is_active = 1 ORDER BY id")
-    vehicles = cursor.fetchall()
-    conn.close()
-    return vehicles
-
-
 def replace_all_vehicles(vehicles_list):
-    """Полная замена списка машин при импорте"""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM vehicles")
@@ -72,9 +43,27 @@ def replace_all_vehicles(vehicles_list):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, v)
             added += 1
-        except:
-            pass
+        except Exception as e:
+            print(f"Ошибка добавления машины: {e}")
 
     conn.commit()
     conn.close()
     return added
+
+
+def get_active_vehicles():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM vehicles WHERE is_active = 1")
+    vehicles = cursor.fetchall()
+    conn.close()
+    return vehicles
+
+
+def get_all_vehicles():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM vehicles ORDER BY id")
+    vehicles = cursor.fetchall()
+    conn.close()
+    return vehicles
