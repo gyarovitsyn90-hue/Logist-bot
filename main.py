@@ -340,19 +340,22 @@ async def importorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    document = update.message.document
+
+    if not document.file_name.endswith((".xlsx", ".xls")):
+        await update.message.reply_text("Нужно прислать Excel-файл (.xlsx или .xls)")
+        return
+
+    file = await context.bot.get_file(document.file_id)
+    file_bytes = await file.download_as_bytearray()
+
+    # Выбираем engine в зависимости от формата файла
+    engine = "openpyxl" if document.file_name.endswith(".xlsx") else "xlrd"
+
     # ====================== ИМПОРТ МАШИН ======================
     if context.user_data.get("awaiting_file_replace"):
-        document = update.message.document
-        if not document.file_name.endswith((".xlsx", ".xls")):
-            await update.message.reply_text("Нужно прислать Excel-файл (.xlsx или .xls)")
-            return
-
-        file = await context.bot.get_file(document.file_id)
-        file_bytes = await file.download_as_bytearray()
-
         try:
-            # Используем pandas — он лучше работает с .xls и .xlsx
-            df = pd.read_excel(BytesIO(file_bytes))
+            df = pd.read_excel(BytesIO(file_bytes), engine=engine)
         except Exception as e:
             await update.message.reply_text(f"Не удалось прочитать файл: {str(e)}")
             context.user_data["awaiting_file_replace"] = False
@@ -394,16 +397,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ====================== ИМПОРТ ЗАКАЗОВ ======================
     if context.user_data.get("awaiting_order_file"):
-        document = update.message.document
-        if not document.file_name.endswith((".xlsx", ".xls")):
-            await update.message.reply_text("Нужно прислать Excel-файл (.xlsx или .xls)")
-            return
-
-        file = await context.bot.get_file(document.file_id)
-        file_bytes = await file.download_as_bytearray()
-
         try:
-            df = pd.read_excel(BytesIO(file_bytes))
+            df = pd.read_excel(BytesIO(file_bytes), engine=engine)
         except Exception as e:
             await update.message.reply_text(f"Не удалось прочитать файл: {str(e)}")
             context.user_data["awaiting_order_file"] = False
