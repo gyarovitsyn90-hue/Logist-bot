@@ -12,6 +12,7 @@ from telegram.ext import (
 )
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+import pandas as pd
 
 from database import (
     init_db, add_vehicle, bulk_add_vehicles, bulk_add_orders_safe,
@@ -343,39 +344,39 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_file_replace"):
         document = update.message.document
         if not document.file_name.endswith((".xlsx", ".xls")):
-            await update.message.reply_text("Нужно прислать Excel-файл (.xlsx)")
+            await update.message.reply_text("Нужно прислать Excel-файл (.xlsx или .xls)")
             return
 
         file = await context.bot.get_file(document.file_id)
         file_bytes = await file.download_as_bytearray()
-        workbook = openpyxl.load_workbook(BytesIO(file_bytes))
-        sheet = workbook.active
+
+        try:
+            # Используем pandas — он лучше работает с .xls и .xlsx
+            df = pd.read_excel(BytesIO(file_bytes))
+        except Exception as e:
+            await update.message.reply_text(f"Не удалось прочитать файл: {str(e)}")
+            context.user_data["awaiting_file_replace"] = False
+            return
 
         vehicles = []
         skipped = 0
 
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            if not row or not row[0]:
-                continue
-
+        for _, row in df.iterrows():
             try:
-                number = str(row[0]).strip()
+                number = str(row.iloc[0]).strip()
                 if not number:
                     skipped += 1
                     continue
 
-                model = row[1] if len(row) > 1 else None
-                volume = float(row[2]) if len(row) > 2 and row[2] else 0
-                pallets = int(row[3]) if len(row) > 3 and row[3] else 0
-                weight = int(row[4]) if len(row) > 4 and row[4] else 0
-                body_type = row[5] if len(row) > 5 else None
-                oversized = 1 if len(row) > 6 and str(row[6]).lower() in ["1", "да", "true", "yes"] else 0
-                restrictions = row[7] if len(row) > 7 else None
+                model = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else None
+                volume = float(row.iloc[2]) if pd.notna(row.iloc[2]) else 0
+                pallets = int(row.iloc[3]) if pd.notna(row.iloc[3]) else 0
+                weight = int(row.iloc[4]) if pd.notna(row.iloc[4]) else 0
+                body_type = str(row.iloc[5]).strip() if pd.notna(row.iloc[5]) else None
+                oversized = 1 if pd.notna(row.iloc[6]) and str(row.iloc[6]).lower() in ["1", "да", "true", "yes"] else 0
+                restrictions = str(row.iloc[7]).strip() if pd.notna(row.iloc[7]) else None
 
-                vehicles.append((
-                    number, model, volume, pallets, weight,
-                    body_type, oversized, restrictions
-                ))
+                vehicles.append((number, model, volume, pallets, weight, body_type, oversized, restrictions))
             except Exception:
                 skipped += 1
 
@@ -395,32 +396,37 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("awaiting_order_file"):
         document = update.message.document
         if not document.file_name.endswith((".xlsx", ".xls")):
-            await update.message.reply_text("Нужно прислать Excel-файл (.xlsx)")
+            await update.message.reply_text("Нужно прислать Excel-файл (.xlsx или .xls)")
             return
 
         file = await context.bot.get_file(document.file_id)
         file_bytes = await file.download_as_bytearray()
-        workbook = openpyxl.load_workbook(BytesIO(file_bytes))
-        sheet = workbook.active
+
+        try:
+            df = pd.read_excel(BytesIO(file_bytes))
+        except Exception as e:
+            await update.message.reply_text(f"Не удалось прочитать файл: {str(e)}")
+            context.user_data["awaiting_order_file"] = False
+            return
 
         orders = []
         skipped = 0
 
-        for row in sheet.iter_rows(min_row=2, values_only=True):
-            # Защита от строк с недостаточным количеством колонок
-            if not row or len(row) < 8 or not row[0] or not row[7]:
-                skipped += 1
-                continue
-
+        for _, row in df.iterrows():
             try:
-                order_number = str(row[0]).strip()
-                client = row[1] if len(row) > 1 else ""
-                address = row[2] if len(row) > 2 else ""
-                delivery_date = str(row[3]).strip() if len(row) > 3 and row[3] else ""
-                comment = row[4] if len(row) > 4 else None
-                pallets = int(row[5]) if len(row) > 5 and row[5] else 0
-                volume = float(row[6]) if len(row) > 6 and row[6] else 0
-                vehicle_number = str(row[7]).strip()
+                order_number = str(row.iloc[0]).strip()
+                vehicle_number = str(row.iloc[7]).strip() if pd.notna(row.iloc[7]) else ""
+
+                if not order_number or not vehicle_number:
+                    skipped += 1
+                    continue
+
+                client = str(row.iloc[1]).strip() if pd.notna(row.iloc[1]) else ""
+                address = str(row.iloc[2]).strip() if pd.notna(row.iloc[2]) else ""
+                delivery_date = str(row.iloc[3]).strip() if pd.notna(row.iloc[3]) else ""
+                comment = str(row.iloc[4]).strip() if pd.notna(row.iloc[4]) else None
+                pallets = int(row.iloc[5]) if pd.notna(row.iloc[5]) else 0
+                volume = float(row.iloc[6]) if pd.notna(row.iloc[6]) else 0
 
                 orders.append((
                     order_number, client, address, delivery_date,
